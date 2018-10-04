@@ -50,9 +50,9 @@
   <!--   <doc_depend>doxygen</doc_depend> -->
   <buildtool_depend>catkin</buildtool_depend>
 
-  <run_depend>ardrone_autonomy</run_depend>
-  <run_depend>usb_cam</run_depend>
-  <run_depend>ar_track_alvar</run_depend>
+  <exec_depend>ardrone_autonomy</exec_depend>
+  <exec_depend>usb_cam</exec_depend>
+  <exec_depend>ar_track_alvar</exec_depend>
 
   <!-- The export tag contains other, unspecified, tags -->
   <export>

@@ -2,8 +2,8 @@
 	<arg name="marker_size" default="8.25" />
 	<arg name="max_new_marker_error" default="0.08" />
 	<arg name="max_track_error" default="0.2" />
-	<arg name="cam_image_topic" default="/ardrone/front/image_raw" />
-	<arg name="cam_info_topic" default="/ardrone/front/camera_info" />
+	<arg name="cam_image_topic" default="/ardrone/image_raw" />
+	<arg name="cam_info_topic" default="/ardrone/camera_info" />
 	<arg name="output_frame" default="/ardrone_base_link" />
 
 	<node name="ar_track_alvar" pkg="ar_track_alvar" type="individualMarkersNoKinect" respawn="false" output="screen">

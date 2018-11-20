@@ -1,5 +1,5 @@
-image_width: 640
-image_height: 360
+image_width: 174
+image_height: 144
 camera_name: ardrone_bottom
 camera_matrix:
   rows: 3

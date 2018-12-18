@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 from __future__ import division, print_function
+from enum import IntEnum
 
 import rospy
 import tf2_ros
@@ -11,12 +12,14 @@ from ardrone_carrier.msg import NavigationGoal, ArdroneCommand
 
 
 # states of the drone
-STATE_OFF      = ArdroneCommand.OFF      # wait for new order
-STATE_STANDBY  = ArdroneCommand.STANDBY  # takeoff and wait
-STATE_REACHING = ArdroneCommand.REACH    # fly to approximate location where target is
-STATE_FINDING  = ArdroneCommand.FIND     # find target near a given location
-STATE_TRACKING = ArdroneCommand.TRACK    # follow target
-STATE_LANDING  = ArdroneCommand.LAND     # land on target
+class STATE(IntEnum):
+    OFF      = ArdroneCommand.OFF      # wait for new order
+    STANDBY  = ArdroneCommand.STANDBY  # takeoff and wait
+    REACHING = ArdroneCommand.REACH    # fly to approximate location where target is
+    FINDING  = ArdroneCommand.FIND     # find target near a given location
+    TRACKING = ArdroneCommand.TRACK    # follow target
+    LANDING  = ArdroneCommand.LAND     # land on target
+
 
 # frames ids
 BUNDLE_ID = 8  # id of the master marker in the bundle
@@ -41,8 +44,8 @@ class FlightManager:
         # self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
         # command and current state of the drone
-        self.command = STATE_OFF
-        self.state = STATE_OFF
+        self.command = STATE.OFF
+        self.state = STATE.OFF
         # target pose (approximate location of bundle)
         self.target_pose = PoseStamped()
         self.target_pose_precision = 0.
@@ -51,6 +54,8 @@ class FlightManager:
         self.bundle_pose = PoseStamped()
         self.bundle_pose_received = False
 
+        rospy.loginfo("Flight manager successfully initialized and ready.")
+
 
     def run(self):
         # loop at given rate
@@ -58,17 +63,17 @@ class FlightManager:
         while not rospy.is_shutdown():
 
             # call right controller according to current state
-            if self.state == STATE_OFF:
+            if self.state == STATE.OFF:
                 pass
-            elif self.state == STATE_STANDBY:
+            elif self.state == STATE.STANDBY:
                 pass
-            elif self.state == STATE_REACHING:
+            elif self.state == STATE.REACHING:
                 self.reaching_loop()
-            elif self.state == STATE_FINDING:
+            elif self.state == STATE.FINDING:
                 self.finding_loop()
-            elif self.state == STATE_TRACKING:
+            elif self.state == STATE.TRACKING:
                 self.tracking_loop()
-            elif self.state == STATE_LANDING:
+            elif self.state == STATE.LANDING:
                 self.landing_loop()
             else:
                 rospy.logerr("Unknown flight state : {}".format(self.state))
@@ -92,8 +97,7 @@ class FlightManager:
         """
         # if new bundle detection has been received, change to TRACKING state
         if self.bundle_pose_received:
-            self.state = STATE_TRACKING
-            rospy.loginfo("FINDING --> TRACKING")
+            self._change_state(STATE.TRACKING)
             return
 
         # otherwise, fly around
@@ -115,8 +119,7 @@ class FlightManager:
 
         # if last bundle detection is too old, we have probably lost the target : we have to find it again
         if (rospy.Time.now() - self.bundle_pose.header.stamp).to_sec() > BUNDLE_DETECTION_TIMEOUT:
-            self.state = STATE_FINDING
-            rospy.logwarn("TRACKING --> FINDING")
+            self._change_state(STATE.FINDING, warn=True)
 
 
     def landing_loop(self):
@@ -125,6 +128,28 @@ class FlightManager:
         """
         # TODO
         pass
+
+    # =======================    Utilities   =======================
+
+    def _change_state(self, new_state, warn=False, previous=None):
+        """
+        Change current state of the flight manager.
+        :param new_state: new state to set
+        :param warn: if True, publish on ROS_STREAM_WARN, else ROS_STREAM_INFO
+        :param previous: string, if not None, replace previous state in display
+        """
+        # display state change
+        previous_state_str = self.state.name if previous is not None else previous
+        if warn:
+            rospy.logwarn("{} --> {}".format(previous_state_str, new_state.name))
+        else:
+            rospy.loginfo("{} --> {}".format(previous_state_str, new_state.name))
+
+        # change state
+        self.state = new_state
+
+        # set LED animations depending on new state
+        # TODO
 
     # =======================  ROS callbacks =======================
 
@@ -147,19 +172,17 @@ class FlightManager:
         :param msg: ArdroneCommand msg
         """
         # save command
-        self.command = msg.command
+        self.command = STATE(msg.command)
 
         # send landing order
         if msg.command == ArdroneCommand.OFF:
             self.land_pub.publish()
-            self.state = STATE_OFF
-            rospy.logwarn(" --> OFF")
+            self._change_state(STATE.OFF, warn=True, previous='')
 
         # send take-off order and wait
         elif msg.command == ArdroneCommand.STANDBY:
             self.takeoff_pub.publish()
-            self.state = STATE_STANDBY
-            rospy.loginfo(" --> STANDBY")
+            self._change_state(STATE.STANDBY, previous='')
 
         # move to specified location
         elif msg.command in {ArdroneCommand.REACH, ArdroneCommand.FIND, ArdroneCommand.TRACK}:
@@ -167,13 +190,11 @@ class FlightManager:
             self.target_pose.header = msg.header
             self.target_pose_precision = msg.precision
             self.target_pose_received = True
-            self.state = STATE_REACHING
-            rospy.loginfo(" --> REACHING")
+            self._change_state(STATE.REACHING, previous='')
 
         # land on target
         elif msg.command == ArdroneCommand.LAND:
-            self.state = STATE_LANDING
-            rospy.loginfo(" --> LANDING")
+            self._change_state(STATE.LANDING)
 
 
 if __name__ == '__main__':

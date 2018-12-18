@@ -3,6 +3,7 @@ from __future__ import division, print_function
 
 import rospy
 import tf2_ros
+from std_msgs.msg import Empty
 from geometry_msgs.msg import PoseStamped
 from ar_track_alvar_msgs.msg import AlvarMarkers
 
@@ -19,8 +20,8 @@ STATE_LANDING  = ArdroneCommand.LAND     # land on target
 
 # frames ids
 BUNDLE_ID = 8  # id of the master marker in the bundle
-FRAME_TARGET = "/marker_{}".format(BUNDLE_ID)  # target bundle to follow/land on
-FRAME_DRONE = "/ardrone_base_link"  # drone
+# FRAME_TARGET = "/marker_{}".format(BUNDLE_ID)  # target bundle to follow/land on
+# FRAME_DRONE = "/ardrone_base_link"  # drone
 
 # time parameters
 LOOP_RATE = 10.  # [Hz] rate of the ROS node loop
@@ -30,14 +31,23 @@ BUNDLE_DETECTION_TIMEOUT = 1.  # [s] if a bundle detection is older than this, w
 class FlightManager:
     def __init__(self):
         # ROS subscribers and publishers
+        self.takeoff_pub = rospy.Publisher("/ardrone/takeoff", Empty, queue_size=1)
+        self.land_pub = rospy.Publisher("/ardrone/land", Empty, queue_size=1)
         self.nav_pub = rospy.Publisher("/pose_goal", NavigationGoal, queue_size=1)
-        self.bundle_sub = rospy.Subscriber("/ar_pose_marker", AlvarMarkers, self._bundle_callback, queue_size=1)
+        self.command_sub = rospy.Subscriber("/command", ArdroneCommand, self._command_callback, queue_size=5)
+        self.bundle_sub = rospy.Subscriber("/ar_pose_marker", AlvarMarkers, self._bundle_callback, queue_size=5)
 
-        self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+        # self.tf_buffer = tf2_ros.Buffer()
+        # self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
-        # other attributes
+        # command and current state of the drone
+        self.command = STATE_OFF
         self.state = STATE_OFF
+        # target pose (approximate location of bundle)
+        self.target_pose = PoseStamped()
+        self.target_pose_precision = 0.
+        self.target_pose_received = False
+        # detected bundle pose
         self.bundle_pose = PoseStamped()
         self.bundle_pose_received = False
 
@@ -49,6 +59,8 @@ class FlightManager:
 
             # call right controller according to current state
             if self.state == STATE_OFF:
+                pass
+            elif self.state == STATE_STANDBY:
                 pass
             elif self.state == STATE_REACHING:
                 self.reaching_loop()
@@ -63,6 +75,7 @@ class FlightManager:
 
             rate.sleep()
 
+    # =======================  States loops =======================
 
     def reaching_loop(self):
         """
@@ -127,6 +140,40 @@ class FlightManager:
                 self.bundle_pose.header = bundle.header
                 self.bundle_pose_received = True
                 return
+
+    def _command_callback(self, msg):
+        """
+        Receive new order.
+        :param msg: ArdroneCommand msg
+        """
+        # save command
+        self.command = msg.command
+
+        # send landing order
+        if msg.command == ArdroneCommand.OFF:
+            self.land_pub.publish()
+            self.state = STATE_OFF
+            rospy.logwarn(" --> OFF")
+
+        # send take-off order and wait
+        elif msg.command == ArdroneCommand.STANDBY:
+            self.takeoff_pub.publish()
+            self.state = STATE_STANDBY
+            rospy.loginfo(" --> STANDBY")
+
+        # move to specified location
+        elif msg.command in {ArdroneCommand.REACH, ArdroneCommand.FIND, ArdroneCommand.TRACK}:
+            self.target_pose.pose = msg.pose
+            self.target_pose.header = msg.header
+            self.target_pose_precision = msg.precision
+            self.target_pose_received = True
+            self.state = STATE_REACHING
+            rospy.loginfo(" --> REACHING")
+
+        # land on target
+        elif msg.command == ArdroneCommand.LAND:
+            self.state = STATE_LANDING
+            rospy.loginfo(" --> LANDING")
 
 
 if __name__ == '__main__':

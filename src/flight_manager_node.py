@@ -6,15 +6,16 @@ import tf2_ros
 from geometry_msgs.msg import PoseStamped
 from ar_track_alvar_msgs.msg import AlvarMarkers
 
-from ardrone_carrier.msg import NavigationGoal
+from ardrone_carrier.msg import NavigationGoal, ArdroneCommand
 
 
 # states of the drone
-STATE_OFF      = 0  # wait for new order
-STATE_REACHING = 1  # fly to approximate location where target is
-STATE_FINDING  = 2  # find target near a given location
-STATE_TRACKING = 3  # follow target
-STATE_LANDING  = 4  # land on target
+STATE_OFF      = ArdroneCommand.OFF      # wait for new order
+STATE_STANDBY  = ArdroneCommand.STANDBY  # takeoff and wait
+STATE_REACHING = ArdroneCommand.REACH    # fly to approximate location where target is
+STATE_FINDING  = ArdroneCommand.FIND     # find target near a given location
+STATE_TRACKING = ArdroneCommand.TRACK    # follow target
+STATE_LANDING  = ArdroneCommand.LAND     # land on target
 
 # frames ids
 BUNDLE_ID = 8  # id of the master marker in the bundle

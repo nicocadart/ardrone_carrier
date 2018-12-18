@@ -51,6 +51,7 @@ find_package(catkin REQUIRED COMPONENTS
 add_message_files(
   FILES
   NavigationGoal.msg
+  ArdroneCommand.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -73,7 +74,6 @@ generate_messages(
   std_msgs  # Or other packages containing msgs
   geometry_msgs
   ardrone_carrier
-
 )
 
 ################################################

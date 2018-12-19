@@ -191,8 +191,13 @@ class FlightManager:
         # continue tracking target, decrease altitude smoothly, then land on target
         # TODO
 
+        # if drone is landing or has landed, go to OFF state
+        if self.drone_state in {1, 2, 8}:
+            rospy.loginfo("Landing on target...")
+            self._change_state(STATE.OFF)
+
         # if last bundle detection is too old, we have probably lost the target : we have to find it again
-        if (rospy.Time.now() - self.bundle_pose.header.stamp).to_sec() > BUNDLE_DETECTION_TIMEOUT:
+        elif (rospy.Time.now() - self.bundle_pose.header.stamp).to_sec() > BUNDLE_DETECTION_TIMEOUT:
             self._change_state(STATE.FINDING, warn=True)
 
     # =======================    Utilities   =======================

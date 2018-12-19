@@ -3,10 +3,11 @@ from __future__ import division, print_function
 from enum import IntEnum
 
 import rospy
-import tf2_ros
+# import tf2_ros
 from std_msgs.msg import Empty
 from geometry_msgs.msg import PoseStamped
 from ar_track_alvar_msgs.msg import AlvarMarkers
+from ardrone_autonomy.msg import Navdata
 
 from ardrone_carrier.msg import NavigationGoal, ArdroneCommand
 
@@ -39,6 +40,7 @@ class FlightManager:
         self.nav_pub = rospy.Publisher("/pose_goal", NavigationGoal, queue_size=1)
         self.command_sub = rospy.Subscriber("/command", ArdroneCommand, self._command_callback, queue_size=5)
         self.bundle_sub = rospy.Subscriber("/ar_pose_marker", AlvarMarkers, self._bundle_callback, queue_size=5)
+        self.navdata_sub = rospy.Subscriber("/ardrone/navdata", Navdata, self._navdata_callback, queue_size=1)
 
         # self.tf_buffer = tf2_ros.Buffer()
         # self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
@@ -46,6 +48,7 @@ class FlightManager:
         # command and current state of the drone
         self.command = STATE.OFF
         self.state = STATE.OFF
+        self.drone_state = 0  # Unknown (see https://ardrone-autonomy.readthedocs.io/en/latest/reading.html)
         # target pose (approximate location of bundle)
         self.target_pose = PoseStamped()
         self.target_pose_precision = 0.
@@ -64,9 +67,9 @@ class FlightManager:
 
             # call right controller according to current state
             if self.state == STATE.OFF:
-                pass
+                self.off_loop()
             elif self.state == STATE.STANDBY:
-                pass
+                self.standby_loop()
             elif self.state == STATE.REACHING:
                 self.reaching_loop()
             elif self.state == STATE.FINDING:
@@ -81,6 +84,28 @@ class FlightManager:
             rate.sleep()
 
     # =======================  States loops =======================
+
+    def off_loop(self):
+        """
+        Land and wait.
+        """
+        # if drone is not landed, send landing order
+        if self.drone_state not in {1, 2, 8}:
+            self.land_pub.publish()
+
+
+    def standby_loop(self):
+        """
+        Take-off and hover.
+        """
+        # if drone is landed, take-off
+        if self.drone_state in {1, 2, 8}:
+            self.takeoff_pub.publish()
+
+        # if drone is hovering, go to next state if necessary
+        elif self.command in {ArdroneCommand.REACH, ArdroneCommand.FIND, ArdroneCommand.TRACK}:
+            self._change_state(STATE.REACHING)
+
 
     def reaching_loop(self):
         """
@@ -166,22 +191,29 @@ class FlightManager:
                 self.bundle_pose_received = True
                 return
 
+    def _navdata_callback(self, msg):
+        """
+        Get drone state.
+        :param msg:  Navdata msg
+        """
+        self.drone_state = msg.state
+        if msg.batteryPercent < 15.:
+            rospy.logwarn("Low battery : {}%".format(msg.batteryPercent))
+
     def _command_callback(self, msg):
         """
         Receive new order.
         :param msg: ArdroneCommand msg
         """
         # save command
-        self.command = STATE(msg.command)
+        self.command = msg.command
 
         # send landing order
         if msg.command == ArdroneCommand.OFF:
-            self.land_pub.publish()
             self._change_state(STATE.OFF, warn=True, previous='')
 
         # send take-off order and wait
         elif msg.command == ArdroneCommand.STANDBY:
-            self.takeoff_pub.publish()
             self._change_state(STATE.STANDBY, previous='')
 
         # move to specified location
@@ -190,15 +222,18 @@ class FlightManager:
             self.target_pose.header = msg.header
             self.target_pose_precision = msg.precision
             self.target_pose_received = True
-            self._change_state(STATE.REACHING, previous='')
+            self._change_state(STATE.STANDBY, previous='')
 
         # land on target
         elif msg.command == ArdroneCommand.LAND:
-            self._change_state(STATE.LANDING)
+            if self.state == STATE.TRACKING:
+                self._change_state(STATE.LANDING)
+            else:
+                rospy.logerr("No target currently tracked :cannot change to LANDING state.")
 
 
 if __name__ == '__main__':
-    rospy.init_node('manager')
+    rospy.init_node('flight_manager')
     try:
         flight_manager = FlightManager()
         flight_manager.run()

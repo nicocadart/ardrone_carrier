@@ -29,7 +29,7 @@ FRAME_TARGET = "/marker_{}".format(BUNDLE_ID)  # target bundle to follow/land on
 FRAME_DRONE = "/ardrone_base_link"  # drone
 
 # time parameters
-LOOP_RATE = 10.  # [Hz] rate of the ROS node loop
+LOOP_RATE = 10.  #  [Hz] rate of the ROS node loop
 BUNDLE_DETECTION_TIMEOUT = 1.  # [s] if a bundle detection is older than this, we go back to FINDING state
 
 FLIGHT_ALTITUDE = 1.  # [m] general altitude of flight for the drone
@@ -64,7 +64,6 @@ class FlightManager:
 
         rospy.loginfo("Flight manager successfully initialized and ready.")
 
-
     def run(self):
         # loop at given rate
         rate = rospy.Rate(LOOP_RATE)
@@ -98,7 +97,6 @@ class FlightManager:
         if self.drone_state not in {1, 2, 8}:
             self.land_pub.publish()
 
-
     def standby_loop(self):
         """
         Take-off and hover.
@@ -110,7 +108,6 @@ class FlightManager:
         # if drone is hovering, go to next state if necessary
         elif self.command in {ArdroneCommand.REACH, ArdroneCommand.FIND, ArdroneCommand.TRACK}:
             self._change_state(STATE.REACHING)
-
 
     def reaching_loop(self):
         """
@@ -137,29 +134,33 @@ class FlightManager:
         error = np.array([distance_to_target.x, distance_to_target.y, distance_to_target.z])
 
         # if drone has arrived to target pose (within tolerance radius)
-        if np.sqrt(np.sum(error**2)) < FLIGHT_PRECISION:
+        if np.sqrt(np.sum(error ** 2)) < FLIGHT_PRECISION:
             # if command was only to reach target, reset order and standby
             if self.command == ArdroneCommand.REACH:
                 self.command = ArdroneCommand.STANDBY
                 self._change_state(STATE.STANDBY)
-
             # if command was to find or track target, move on to next state
-            if self.command in {ArdroneCommand.FIND, ArdroneCommand.TRACK}:
+            elif self.command in {ArdroneCommand.FIND, ArdroneCommand.TRACK}:
                 self._change_state(STATE.FINDING)
-
 
     def finding_loop(self):
         """
         Drone has to fly around and find the marker/bundle.
         """
-        # if new bundle detection has been received, change to TRACKING state
+        # if new bundle detection has been received, target has been found !
         if self.bundle_pose_received:
-            self._change_state(STATE.TRACKING)
-            return
+            # if command was only to find target, reset order and standby
+            if self.command == ArdroneCommand.FIND:
+                self.command = ArdroneCommand.STANDBY
+                self._change_state(STATE.STANDBY)
+            # if command was to track target, move on to next state
+            elif self.command == ArdroneCommand.TRACK:
+                self._change_state(STATE.TRACKING)
 
-        # otherwise, fly around
-        # TODO
-
+        # otherwise, fly around to find target
+        else:
+            # TODO
+            pass
 
     def tracking_loop(self):
         """
@@ -179,13 +180,20 @@ class FlightManager:
         if (rospy.Time.now() - self.bundle_pose.header.stamp).to_sec() > BUNDLE_DETECTION_TIMEOUT:
             self._change_state(STATE.FINDING, warn=True)
 
+        # if order to land on target has been received, change state
+        elif self.command == ArdroneCommand.LAND:
+            self._change_state(STATE.LANDING)
 
     def landing_loop(self):
         """
         Drone has to land on bundle.
         """
+        # continue tracking target, decrease altitude smoothly, then land on target
         # TODO
-        pass
+
+        # if last bundle detection is too old, we have probably lost the target : we have to find it again
+        if (rospy.Time.now() - self.bundle_pose.header.stamp).to_sec() > BUNDLE_DETECTION_TIMEOUT:
+            self._change_state(STATE.FINDING, warn=True)
 
     # =======================    Utilities   =======================
 
@@ -259,10 +267,8 @@ class FlightManager:
 
         # land on target
         elif msg.command == ArdroneCommand.LAND:
-            if self.state == STATE.TRACKING:
-                self._change_state(STATE.LANDING)
-            else:
-                rospy.logerr("No target currently tracked :cannot change to LANDING state.")
+            if self.state != STATE.TRACKING:
+                rospy.logerr("No target currently tracked : cannot change to LANDING state.")
 
 
 if __name__ == '__main__':

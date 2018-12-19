@@ -2,6 +2,22 @@
 
 ROS project fro an ardrone landing on mobile platform.
 
+## TODO
+
+### navigation_node (and pid)
+
+- new behavior : when receiving a new NavigationGoal msg, if quaternion is null, ignore rotation and simply fly to given position.
+- bug to fix : convert new NavigationGoal into right frame
+- test node on drone
+- Rename variables and functions to snake_case (CamelCase only for classes)
+
+### flight_manager_node
+
+- complete state machine
+- add LED animations depending on current state
+- test node on drone
+
+
 ## Ar Track Alvar
 
 ### Mode d'emploi

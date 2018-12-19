@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 from __future__ import division, print_function
 from enum import IntEnum
+import numpy as np
 
 import rospy
-# import tf2_ros
+import tf2_ros
 from std_msgs.msg import Empty
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, PointStamped
 from ar_track_alvar_msgs.msg import AlvarMarkers
 from ardrone_autonomy.msg import Navdata
 
@@ -23,13 +24,16 @@ class STATE(IntEnum):
 
 
 # frames ids
-BUNDLE_ID = 8  # id of the master marker in the bundle
-# FRAME_TARGET = "/marker_{}".format(BUNDLE_ID)  # target bundle to follow/land on
-# FRAME_DRONE = "/ardrone_base_link"  # drone
+BUNDLE_ID = 3  # id of the master marker in the bundle
+FRAME_TARGET = "/marker_{}".format(BUNDLE_ID)  # target bundle to follow/land on
+FRAME_DRONE = "/ardrone_base_link"  # drone
 
 # time parameters
 LOOP_RATE = 10.  # [Hz] rate of the ROS node loop
 BUNDLE_DETECTION_TIMEOUT = 1.  # [s] if a bundle detection is older than this, we go back to FINDING state
+
+FLIGHT_ALTITUDE = 1.  # [m] general altitude of flight for the drone
+FLIGHT_PRECISION = 0.20  # [m] tolerance to reach specified target
 
 
 class FlightManager:
@@ -42,11 +46,12 @@ class FlightManager:
         self.bundle_sub = rospy.Subscriber("/ar_pose_marker", AlvarMarkers, self._bundle_callback, queue_size=5)
         self.navdata_sub = rospy.Subscriber("/ardrone/navdata", Navdata, self._navdata_callback, queue_size=1)
 
-        # self.tf_buffer = tf2_ros.Buffer()
-        # self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+        # TF management
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
         # command and current state of the drone
-        self.command = STATE.OFF
+        self.command = ArdroneCommand.OFF
         self.state = STATE.OFF
         self.drone_state = 0  # Unknown (see https://ardrone-autonomy.readthedocs.io/en/latest/reading.html)
         # target pose (approximate location of bundle)
@@ -111,9 +116,36 @@ class FlightManager:
         """
         Fly to approximate target where bundle is supposed to be located.
         """
-        # if drone has arrived to target pose, find the bundle
-        # TODO
-        pass
+        # if new target has been received, send its pose to navigation node
+        if self.target_pose_received:
+            nav_target = NavigationGoal()
+            nav_target.header.stamp = self.target_pose.header.stamp
+            nav_target.header.frame_id = self.target_pose.header.frame_id
+            nav_target.mode = NavigationGoal.ABSOLUTE
+            # if z component is 0, set it to default height
+            if not self.target_pose.pose.position.z:
+                self.target_pose.pose.position.z = FLIGHT_ALTITUDE
+            nav_target.pose = self.target_pose.pose
+            self.nav_pub.publish(nav_target)
+            self.target_pose_received = False
+
+        # compute distance to target
+        target_pt = PointStamped()
+        target_pt.header.frame_id = self.target_pose.header.frame_id
+        target_pt.point = self.target_pose.pose.position
+        distance_to_target = self.tf_buffer.transform(target_pt, FRAME_DRONE).point
+        error = np.array([distance_to_target.x, distance_to_target.y, distance_to_target.z])
+
+        # if drone has arrived to target pose (within tolerance radius)
+        if np.sqrt(np.sum(error**2)) < FLIGHT_PRECISION:
+            # if command was only to reach target, reset order and standby
+            if self.command == ArdroneCommand.REACH:
+                self.command = ArdroneCommand.STANDBY
+                self._change_state(STATE.STANDBY)
+
+            # if command was to find or track target, move on to next state
+            if self.command in {ArdroneCommand.FIND, ArdroneCommand.TRACK}:
+                self._change_state(STATE.FINDING)
 
 
     def finding_loop(self):
@@ -136,7 +168,8 @@ class FlightManager:
         # if new bundle detection has been received, send its pose to navigation node
         if self.bundle_pose_received:
             nav_target = NavigationGoal()
-            nav_target.header = self.bundle_pose.header
+            nav_target.header.stamp = self.bundle_pose.header.stamp
+            nav_target.header.frame_id = self.bundle_pose.header.frame_id
             nav_target.pose = self.bundle_pose.pose
             nav_target.mode = NavigationGoal.ABSOLUTE
             self.nav_pub.publish(nav_target)

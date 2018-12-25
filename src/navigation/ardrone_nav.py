@@ -32,8 +32,8 @@ class ArdroneNav:
         """Init function (to be completed)"""
 
         ## Tf attributes
-        self.tf_buffer = tf.Buffer()
-        self.tf_listener = tf.TransformListener(self.tf_buffer)
+        self.tfBuffer = tf.Buffer()
+        self.tf_listener = tf.TransformListener(self.tfBuffer)
         self.tf_ardrone = '/ardrone' # to be redefined
         self.tf_target = '/target' # to be redefined
         self.tf_world = '/world' # to be redefined
@@ -42,13 +42,16 @@ class ArdroneNav:
         ####################
         ## Ardrone topics ##
         ####################
+        # Subscribe to the /ardrone/navdata topic, of message type navdata,
+        ## and call self.ReceiveNavdata when a message is received
+        self.subNavdata = rospy.Subscriber('/ardrone/navdata', Navdata, self.ReadNavdata)
 
         # Allow the controller to publish to the /cmd_vel topic and thus control the drone
-        self.pub_command = rospy.Publisher('/cmd_vel', Twist)
+        self.pubCommand = rospy.Publisher('/cmd_vel', Twist)
 
         # Setup regular publishing of control packets
         self.command = Twist()
-        self.command_timer = rospy.Timer(rospy.Duration(COMMAND_PERIOD/1000.0), self.SendCommand)
+        self.commandTimer = rospy.Timer(rospy.Duration(COMMAND_PERIOD/1000.0), self.SendCommand)
 
         # rate = rospy.Rate(Hertz) à mettre dans le noeud
 
@@ -56,10 +59,10 @@ class ArdroneNav:
         ## Positions (target and estimated) ###
         #######################################
 
-        self.sub_target_pos = rospy.Subscriber(TARGET_TOPIC_NAME, TARGET_TOPIC_TYPE,
+        self.subTargetPos = rospy.Subscriber(TARGET_TOPIC_NAME, TARGET_TOPIC_TYPE,
                                              self.ReadTargetPos)
 
-        self.sub_est_pos = rospy.Subscriber(EST_POSE_TOPIC_NAME, EST_POSE_TOPIC_TYPE,
+        self.subEstPos = rospy.Subscriber(EST_POSE_TOPIC_NAME, EST_POSE_TOPIC_TYPE,
                                           self.ReadEstPos)
 
         # Units will be meters, seconds, and radiants.
@@ -81,45 +84,45 @@ class ArdroneNav:
         ##########
 
         # Differents weights for each composant
-        self.p = {'position': [0.2, 0.2, 0.2], 'orientation': [0.2, 0.2, 0.2]}
-        self.i = {'position': [0.3, 0.3, 0.3], 'orientation': [0.3, 0.3, 0.3]}
-        self.d = {'position': [0.1, 0.1, 0.1], 'orientation': [0.1, 0.1, 0.1]}
+        self.D = {'position': [0.1, 0.1, 0.1], 'orientation': [0.1, 0.1, 0.1]}
+        self.P = {'position': [0.2, 0.2, 0.2], 'orientation': [0.2, 0.2, 0.2]}
+        self.I = {'position': [0.3, 0.3, 0.3], 'orientation': [0.3, 0.3, 0.3]}
         self.dt = {'position': [0.0001, 0.0001, 0.0001], 'orientation': [0.0001, 0.0001, 0.0001]}
 
-        self.pids['position'] = [PID(kp, ki, kd, dt) for (kp, ki,
-                                                          kd, dt) in zip(self.p['position'],
-                                                                         self.i['position'],
-                                                                         self.d['position'],
+        self.PIDs['position'] = [PID(kp, ki, kd, dt) for (kp, ki,
+                                                          kd, dt) in zip(self.P['position'],
+                                                                         self.I['position'],
+                                                                         self.D['position'],
                                                                          self.dt['position'])]
 
-        self.pids['orientation'] = [PID(kp, ki, kd, dt) for (kp, ki,
-                                                             kd, dt) in zip(self.p['orientation'],
-                                                                            self.i['orientation'],
-                                                                            self.d['orientation'],
+        self.PIDs['orientation'] = [PID(kp, ki, kd, dt) for (kp, ki,
+                                                             kd, dt) in zip(self.P['orientation'],
+                                                                            self.I['orientation'],
+                                                                            self.D['orientation'],
                                                                             self.dt['orientation'])]
 
         # If constraints on velocity are defined, activate saturation in PID
-        for id in range(len(self.pids['position'])):
+        for id in range(len(self.PIDs['position'])):
             vel_cstr = self.vel_constrain['position'][id]
             if vel_cstr != 0.0:
-                self.pids['position'][id].activate_command_saturation(-vel_cstr, vel_cstr)
+                self.PIDs['position'][id].activateCommandSaturation(-vel_cstr, vel_cstr)
 
-        for id in range(len(self.pids['orientation'])):
+        for id in range(len(self.PIDs['orientation'])):
             vel_cstr = self.vel_constrain['orientation'][id]
             if vel_cstr != 0.0:
-                self.pids['orientation'][id].activate_command_saturation(-vel_cstr, vel_cstr)
+                self.PIDs['orientation'][id].activateCommandSaturation(-vel_cstr, vel_cstr)
 
 
-    # def read_navdata(self, navdata):
-    #     """Use Subscriber to read velocity data from ardrone msgs (to be completed)"""
-    #     self.curr_vel['position'][0] = navdata.vx/1000. # mm/sec -> m/s
-    #     self.curr_vel['position'][1] = navdata.vy/1000.
-    #     self.curr_vel['position'][2] = navdata.vz/1000.
-    #     self.curr_vel['orientation'][0] = 2*np.pi*(navdata.rotX/360.) # degree -> rad
-    #     self.curr_vel['orientation'][1] = 2*np.pi*(navdata.rotY/360.)
-    #     self.curr_vel['orientation'][2] = 2*np.pi*(navdata.rotZ/360.)
+    def ReadNavdata(self, navdata):
+        """Use Subscriber to read velocity data from ardrone msgs (to be completed)"""
+        self.curr_vel['position'][0] = navdata.vx/1000. # mm/sec -> m/s
+        self.curr_vel['position'][1] = navdata.vy/1000.
+        self.curr_vel['position'][2] = navdata.vz/1000.
+        self.curr_vel['orientation'][0] = 2*np.pi*(navdata.rotX/360.) # degree -> rad
+        self.curr_vel['orientation'][1] = 2*np.pi*(navdata.rotY/360.)
+        self.curr_vel['orientation'][2] = 2*np.pi*(navdata.rotZ/360.)
 
-    def set_command(self, command):
+    def SetCommand(self, command):
         """Define the command msg (Twist) to be published to the drone"""
 
         vx = command['position'][0]
@@ -137,11 +140,11 @@ class ArdroneNav:
         self.command.angular.y = (360.*rotY)/(2*np.pi)
         self.command.angular.z = (360.*rotZ)/(2*np.pi)
 
-    def send_command(self):
+    def SendCommand(self):
         """publish the command twist msg to cmd_vel/"""
-        self.pub_command.publish(self.command)
+        self.pubCommand.publish(self.command)
 
-    def read_target_pose(self, msg_pose):
+    def ReadTargetPos(self, msg_pose):
         """Get target position"""
 
         self.mode = msg_pose.mode
@@ -177,10 +180,10 @@ class ArdroneNav:
 
 
 
-    def read_est_pose(self, msg_pose):
+    def ReadEstPos(self, msg_pose):
         """Get target position"""
 
-        transform = self.tf_buffer.lookup_transform(self.tf_world, self.tf_ardrone,
+        transform = self.tfBuffer.lookup_transform(self.tf_world, self.tf_ardrone,
                                                    rospy.Time(0))
         # Get position from transform
         self.est_pose.position = [transform.transform.translation.x,
@@ -206,12 +209,12 @@ class ArdroneNav:
 
         command = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
 
-        for id in range(len(self.pids['position'])):
-            command['position'][id] = self.pids['position'][id].compute_command(\
+        for id in range(len(self.PIDs['position'])):
+            command['position'][id] = self.PIDs['position'][id].computeCommand(\
                                                                         self.errors['position'][id])
-        for id in range(len(self.pids['orientation'])):
-            command['orientation'][id] = self.pids['orientation'][id].compute_command(\
+        for id in range(len(self.PIDs['orientation'])):
+            command['orientation'][id] = self.PIDs['orientation'][id].computeCommand(\
                                                                     self.errors['orientation'][id])
 
-        self.set_command(command)
-        self.send_command()
+        self.SetCommand(command)
+        self.SendCommand()

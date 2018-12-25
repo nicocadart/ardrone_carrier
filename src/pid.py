@@ -13,41 +13,41 @@ class PID:
         self.dt = dt
 
         # Set errors at 0
-        self.previousError = 0.0 # previous proportional error
-        self.previousIntError = 0.0 # previous integral error
+        self.previous_error = 0.0 # previous proportional error
+        self.previous_int_error = 0.0 # previous integral error
 
         # Anti wind-up
-        self.saturationActivation = False # Boolean to activate saturation for the command
-        self.integrateError = True #boolean to choose if we integrate error
+        self.saturation_activation = False # Boolean to activate saturation for the command
+        self.integrate_error = True #boolean to choose if we integrate error
 
         # Used only if saturation is activated
-        self.lowSaturation = 0.0
-        self.highSaturation = 0.0
+        self.low_saturation = 0.0
+        self.high_saturation = 0.0
 
 
-    def activateCommandSaturation(self, lowSaturation, highSaturation):
+    def activate_command_saturation(self, low_saturation, high_saturation):
         """
             @brief: Constrain the output PID command between min and max values,
                     and activate conditonal integration anti-windup.
             @param: lowSat : low saturation threshold (= minimum value of command)
             @param: highSat : high saturation threshold (= maximum value of command)
         """
-        self.saturationActivation = True
-        self.lowSaturation = lowSaturation
-        self.highSaturation = highSaturation
+        self.saturation_activation = True
+        self.low_saturation = low_saturation
+        self.high_saturation = high_saturation
 
 
-    def deactivateCommandSaturation(self):
+    def deactivate_command_saturation(self):
         """
             @brief: Deactivate PID command saturation and conditonal integration anti-windup.
         """
-        self.saturationActivation = False
-        self.lowSaturation = 0.0
-        self.highSaturation = 0.0
-        self.integrateError = True
+        self.saturation_activation = False
+        self.low_saturation = 0.0
+        self.high_saturation = 0.0
+        self.integrate_error = True
 
 
-    def antiWindUp(self, saturation, error):
+    def anti_wind_up(self, saturation, error):
         """
             @brief: Run conditional anti-windup to prevent integrator term explosion.
                     If the PID output command is saturated, the anti-windup will stop error
@@ -57,11 +57,11 @@ class PID:
         """
 
         if (saturation == 0 or error*saturation < 0):
-            self.integrateError = True
+            self.integrate_error = True
         else:
-            self.integrateError = False
+            self.integrate_error = False
 
-    def computeCommand(self, error):
+    def compute_command(self, error):
         """
             @brief: Run the PID control
             @param: error : value of the error (= goalValue - currentValue)
@@ -69,25 +69,25 @@ class PID:
         """
         # compute PID command
         command = self.kp*error +\
-                  (self.kd/self.dt)*(error - self.previousError) +\
-                  self.ki*self.dt*self.previousIntError
+                  (self.kd/self.dt)*(error - self.previous_error) +\
+                  self.ki*self.dt*self.previous_int_error
 
         # saturate command PID if enabled
-        if self.saturationActivation:
+        if self.saturation_activation:
             # compute saturated command
-            saturatedCommand = max(min(command, self.highSaturation), self.lowSaturation)
+            saturatedCommand = max(min(command, self.high_saturation), self.low_saturation)
 
             # Use anti-windup
-            self.antiWindUp(error, command - saturatedCommand)
+            self.anti_wind_up(error, command - saturatedCommand)
 
             # Update command with saturated
             command = saturatedCommand
 
         # Update error
-        self.previousError = error
+        self.previous_error = error
 
         # if integral error activated, compute it
-        if self.integrateError:
-            self.previousIntError += error
+        if self.integrate_error:
+            self.previous_int_error += error
 
         return command

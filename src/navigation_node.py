@@ -1,3 +1,5 @@
+#!/usr/bin/python
+# coding=utf-8
 # Import the ROS libraries, and load the manifest file which through <depend package=... />
 ## will give us access to the project dependencies
 import rospy
@@ -9,6 +11,7 @@ from ardrone_autonomy.msg import Navdata # for receiving navdata feedback
 from ardrone_carrier.msg import NavigationGoal
 from geometry_msgs.msg import Twist  	 # for sending commands to the drone
 from tf.transformations import euler_from_quaternion
+from pid import PID
 
 import roslib; roslib.load_manifest('ardrone_tutorials')
 
@@ -17,12 +20,16 @@ import roslib; roslib.load_manifest('ardrone_tutorials')
 # ???
 
 # Some Constants
-COMMAND_PERIOD = 100 #ms
-TARGET_TOPIC_NAME = '/unknown_package/unknown_topic'
+TARGET_TOPIC_NAME = '/pose_goal'
 TARGET_TOPIC_TYPE = NavigationGoal
 
-EST_POSE_TOPIC_NAME = '/unknown_package/unknown_topic'
-EST_POSE_TOPIC_TYPE = Twist()
+EST_POSE_TOPIC_NAME = '/ardrone/navdata' #TODO: check the name
+EST_POSE_TOPIC_TYPE = Twist
+
+TF_ARDRONE = '/ardrone_base_link'
+TF_TARGET = '/pose_goal'
+
+LOOP_RATE = 10.  #  [Hz] rate of the ROS node loop
 
 class ArdroneNav:
     """ Class for Ardrone navigation: getting target position (and estimated one) and
@@ -34,10 +41,9 @@ class ArdroneNav:
         ## Tf attributes
         self.tf_buffer = tf.Buffer()
         self.tf_listener = tf.TransformListener(self.tf_buffer)
-        self.tf_ardrone = '/ardrone' # to be redefined
-        self.tf_target = '/target' # to be redefined
-        self.tf_world = '/world' # to be redefined
-        self.tf_control = '/personal' # to be defined by target msg
+        self.tf_ardrone = TF_ARDRONE
+        self.tf_target = TF_TARGET
+        self.tf_control = None # to be defined by target msg
 
 
         ####################
@@ -45,11 +51,10 @@ class ArdroneNav:
         ####################
 
         # Allow the controller to publish to the /cmd_vel topic and thus control the drone
-        self.pub_command = rospy.Publisher('/cmd_vel', Twist)
+        self.pub_command = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
 
         # Setup regular publishing of control packets
         self.command = Twist()
-        self.command_timer = rospy.Timer(rospy.Duration(COMMAND_PERIOD/1000.0), self.SendCommand)
 
         # rate = rospy.Rate(Hertz) à mettre dans le noeud
 
@@ -73,7 +78,7 @@ class ArdroneNav:
         self.target_pose = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
         self.est_pose = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
 
-        self.error = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
+        self.errors = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
 
         self.vel_constrain = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
 
@@ -93,6 +98,7 @@ class ArdroneNav:
         self.d = {'position': [0.1, 0.1, 0.1], 'orientation': [0.1, 0.1, 0.1]}
         self.dt = {'position': [0.0001, 0.0001, 0.0001], 'orientation': [0.0001, 0.0001, 0.0001]}
 
+        self.pids = {}
         self.pids['position'] = [PID(kp, ki, kd, dt) for (kp, ki,
                                                           kd, dt) in zip(self.p['position'],
                                                                          self.i['position'],
@@ -249,3 +255,20 @@ class ArdroneNav:
         # set and send command to the drone
         self.set_command(command)
         self.send_command()
+
+    def run(self):
+        # loop at given rate
+        rate = rospy.Rate(LOOP_RATE)
+        while not rospy.is_shutdown():
+            self.update()
+            print('update')
+            rate.sleep()
+
+
+if __name__ == '__main__':
+    rospy.init_node('navigation')
+    try:
+        navigation_node = ArdroneNav()
+        navigation_node.run()
+    except rospy.ROSInterruptException:
+        print("Shutting down drone navigation node...")

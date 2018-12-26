@@ -37,6 +37,7 @@ class ArdroneNav:
         self.tf_ardrone = '/ardrone' # to be redefined
         self.tf_target = '/target' # to be redefined
         self.tf_world = '/world' # to be redefined
+        self.tf_control = '/personal' # to be defined by target msg
 
 
         ####################
@@ -56,11 +57,13 @@ class ArdroneNav:
         ## Positions (target and estimated) ###
         #######################################
 
+        # WARNING: est_pose should always be read after target at first, to allow target msg to
+        # define the working frame
         self.sub_target_pos = rospy.Subscriber(TARGET_TOPIC_NAME, TARGET_TOPIC_TYPE,
-                                             self.ReadTargetPos)
+                                             self.read_target_pose)
 
         self.sub_est_pos = rospy.Subscriber(EST_POSE_TOPIC_NAME, EST_POSE_TOPIC_TYPE,
-                                          self.ReadEstPos)
+                                          self.read_est_pose)
 
         # Units will be meters, seconds, and radiants.
 
@@ -76,9 +79,13 @@ class ArdroneNav:
 
         self.mode = 0 # RELATIVE or ABSOLUTE for target
 
+
         ##########
         ## PID ###
         ##########
+
+        # if no angle target is given, only compute command for position
+        self.no_quaternion = False
 
         # Differents weights for each composant
         self.p = {'position': [0.2, 0.2, 0.2], 'orientation': [0.2, 0.2, 0.2]}
@@ -119,6 +126,7 @@ class ArdroneNav:
     #     self.curr_vel['orientation'][1] = 2*np.pi*(navdata.rotY/360.)
     #     self.curr_vel['orientation'][2] = 2*np.pi*(navdata.rotZ/360.)
 
+
     def set_command(self, command):
         """Define the command msg (Twist) to be published to the drone"""
 
@@ -137,23 +145,37 @@ class ArdroneNav:
         self.command.angular.y = (360.*rotY)/(2*np.pi)
         self.command.angular.z = (360.*rotZ)/(2*np.pi)
 
+
     def send_command(self):
         """publish the command twist msg to cmd_vel/"""
         self.pub_command.publish(self.command)
 
-    def read_target_pose(self, msg_pose):
-        """Get target position"""
 
+    def read_target_pose(self, msg_pose):
+        """Get target position in specific frame. We assume that target is already expressed in the
+        control frame """
+
+        self.tf_control = msg_pose.header.frame_id
+
+        # define mode for target, absolute or relative coordinates
         self.mode = msg_pose.mode
+
+        # According to mode, define target pose in referential
         if self.mode == NavigationGoal.ABSOLUTE:
             # get linear position
             self.target_pose['position'] = msg_pose.pose.position
 
             # get angular orientation (in Euler angle)
             quaternion = msg_pose.pose.orientation
-            rotation = euler_from_quaternion((quaternion.x, quaternion.y, quaternion.z,
-                                              quaternion.w))
-            self.target_pose['orientation'] = [rotation[0], rotation[1], rotation[2]] # in rad
+
+            # Check for target angle, if not deactivate angle control
+            if quaternion == [0.0, 0.0, 0.0, 0.0]:
+                self.no_quaternion = True
+                self.target_pose['orientation'] = [0.0, 0.0, 0.0]
+            else:
+                rotation = euler_from_quaternion((quaternion.x, quaternion.y, quaternion.z,
+                                                  quaternion.w))
+                self.target_pose['orientation'] = [rotation[0], rotation[1], rotation[2]] # in rad
 
 
         elif self.mode == NavigationGoal.RELATIVE:
@@ -163,25 +185,30 @@ class ArdroneNav:
 
             # get angular orientation (in Euler angle)
             quaternion = msg_pose.pose.orientation
-            rotation = euler_from_quaternion((quaternion.x, quaternion.y, quaternion.z,
-                                              quaternion.w))
 
-            self.target_pose['orientation'] = [rotation[0], rotation[1], rotation[2]] # in rad
-            self.target_pose['orientation'] += self.est_pose['orientation']
+            # Check for target angle, if not deactivate angle control
+            if quaternion == [0.0, 0.0, 0.0, 0.0]:
+                self.no_quaternion = True
+                self.target_pose['orientation'] = [0.0, 0.0, 0.0]
+            else:
+                rotation = euler_from_quaternion((quaternion.x, quaternion.y, quaternion.z,
+                                                  quaternion.w))
 
-            self.target_pose['orientation'] = [angle%(2*np.pi) for angle\
-                                               in self.target_pose['orientation']]
+                self.target_pose['orientation'] = [rotation[0], rotation[1], rotation[2]] # in rad
+                self.target_pose['orientation'] += self.est_pose['orientation']
+
+                self.target_pose['orientation'] = [angle%(2*np.pi) for angle\
+                                                   in self.target_pose['orientation']]
 
         else:
             raise NotImplementedError
 
 
-
     def read_est_pose(self, msg_pose):
         """Get target position"""
 
-        transform = self.tf_buffer.lookup_transform(self.tf_world, self.tf_ardrone,
-                                                   rospy.Time(0))
+        transform = self.tf_buffer.lookup_transform(self.tf_control, self.tf_ardrone,
+                                                    rospy.Time(0))
         # Get position from transform
         self.est_pose.position = [transform.transform.translation.x,
                                   transform.transform.translation.y,
@@ -193,25 +220,32 @@ class ArdroneNav:
                                           quaternion.w))
         self.est_pose.orientation = [rotation[0], rotation[1], rotation[2]]
 
+
     def update(self):
         """compute velocity command through PID"""
 
+        # Set empty command
+        command = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
+
+        # Compute command (error + pid) for translation
         self.errors['position'] = [pose_t - pose_e for (pose_t,
                                    pose_e) in zip(self.est_pose['position'],
                                    self.target_pose['position'])]
 
-        self.errors['orientation'] = [(angle_t - angle_e)%(2*np.pi) for (angle_t,
-                                   angle_e) in zip(self.est_pose['orientation'],
-                                   self.target_pose['orientation'])]
-
-        command = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
-
         for id in range(len(self.pids['position'])):
-            command['position'][id] = self.pids['position'][id].compute_command(\
-                                                                        self.errors['position'][id])
-        for id in range(len(self.pids['orientation'])):
-            command['orientation'][id] = self.pids['orientation'][id].compute_command(\
+           command['position'][id] = self.pids['position'][id].compute_command(\
+                                                                self.errors['position'][id])
+
+        # if command for angle is not null, compute angle command
+        if not self.no_quaternion:
+            self.errors['orientation'] = [(angle_t - angle_e)%(2*np.pi) for (angle_t,
+                                       angle_e) in zip(self.est_pose['orientation'],
+                                       self.target_pose['orientation'])]
+
+            for id in range(len(self.pids['orientation'])):
+                command['orientation'][id] = self.pids['orientation'][id].compute_command(\
                                                                     self.errors['orientation'][id])
 
+        # set and send command to the drone
         self.set_command(command)
         self.send_command()

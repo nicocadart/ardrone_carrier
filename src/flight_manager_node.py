@@ -25,8 +25,9 @@ class STATE(IntEnum):
 
 # frames ids
 BUNDLE_ID = 3  # id of the master marker in the bundle
-FRAME_TARGET = "/marker_{}".format(BUNDLE_ID)  # target bundle to follow/land on
-FRAME_DRONE = "/ardrone_base_link"  # drone
+FRAME_TARGET = "marker_{}".format(BUNDLE_ID)  # target bundle to follow/land on
+FRAME_DRONE = "ardrone_base_link"  # drone
+FRAME_WORLD = "odom"  # base frame
 
 # time parameters
 LOOP_RATE = 10.  # [Hz] rate of the ROS node loop
@@ -54,13 +55,13 @@ class FlightManager:
         # command and current state of the drone
         self.command = ArdroneCommand.OFF
         self.state = STATE.OFF
-        self._change_state(STATE.OFF, previous='')
+        self._change_state(STATE.OFF, previous='')  # used only to display state and set LED animations
         self.drone_state = 0  # Unknown (see https://ardrone-autonomy.readthedocs.io/en/latest/reading.html)
 
-        # target pose (approximate location of bundle)
-        self.target_pose = PoseStamped()
-        self.target_pose_precision = 0.
-        self.target_pose_received = False
+        # target position (approximate location of bundle)
+        self.target_point = PointStamped()
+        self.target_point_precision = 0.
+        self.target_point_received = False
 
         # detected bundle pose
         self.bundle_pose = PoseStamped()
@@ -119,23 +120,16 @@ class FlightManager:
         Fly to approximate target where bundle is supposed to be located.
         """
         # if new target has been received, send its pose to navigation node
-        if self.target_pose_received:
+        if self.target_point_received:
             nav_target = NavigationGoal()
-            nav_target.header.stamp = self.target_pose.header.stamp
-            nav_target.header.frame_id = self.target_pose.header.frame_id
+            nav_target.header = self.target_point.header
+            nav_target.pose.position = self.target_point.point
             nav_target.mode = NavigationGoal.ABSOLUTE
-            # if z component is 0, set it to default height
-            if not self.target_pose.pose.position.z:
-                self.target_pose.pose.position.z = FLIGHT_ALTITUDE
-            nav_target.pose = self.target_pose.pose
             self.nav_pub.publish(nav_target)
-            self.target_pose_received = False
+            self.target_point_received = False
 
         # compute distance to target
-        target_pt = PointStamped()
-        target_pt.header.frame_id = self.target_pose.header.frame_id
-        target_pt.point = self.target_pose.pose.position
-        distance_to_target = self.tf_buffer.transform(target_pt, FRAME_DRONE).point
+        distance_to_target = self.tf_buffer.transform(self.target_point, FRAME_DRONE).point
         error = np.array([distance_to_target.x, distance_to_target.y, distance_to_target.z])
 
         # if drone has arrived to target pose (within tolerance radius)
@@ -175,8 +169,7 @@ class FlightManager:
         # TODO : modify flight height of the bundle
         if self.bundle_pose_received:
             nav_target = NavigationGoal()
-            nav_target.header.stamp = self.bundle_pose.header.stamp
-            nav_target.header.frame_id = self.bundle_pose.header.frame_id
+            nav_target.header = self.bundle_pose.header
             nav_target.pose = self.bundle_pose.pose
             nav_target.mode = NavigationGoal.ABSOLUTE
             self.nav_pub.publish(nav_target)
@@ -216,7 +209,7 @@ class FlightManager:
         :param previous: string, if not None, replace previous state in display
         """
         # display state change
-        previous_state_str = self.state.name if previous is not None else previous
+        previous_state_str = self.state.name if previous is None else previous
         if warn:
             rospy.logwarn("{} --> {}".format(previous_state_str, new_state.name))
         else:
@@ -270,10 +263,18 @@ class FlightManager:
 
         # move to specified location
         elif msg.command in {ArdroneCommand.REACH, ArdroneCommand.FIND, ArdroneCommand.TRACK}:
-            self.target_pose.pose = msg.pose
-            self.target_pose.header = msg.header
-            self.target_pose_precision = msg.precision
-            self.target_pose_received = True
+            # save message
+            self.target_point.point = msg.position
+            self.target_point.header = msg.header
+            self.target_point_precision = msg.precision
+            # if frame_id is not defined, assume it is the world frame
+            if not self.target_point.header.frame_id:
+                self.target_point.header.frame_id = FRAME_WORLD
+            # # if z component is 0 in world frame, set it to default height
+            # if not self.target_point.point.z and self.target_point.header.frame_id == FRAME_WORLD:
+            #     self.target_point.point.z = FLIGHT_ALTITUDE
+            # notify msg reception and change state
+            self.target_point_received = True
             self._change_state(STATE.STANDBY, previous='')
 
         # land on target
@@ -288,7 +289,7 @@ class FlightManager:
                 self._change_state(STATE(-msg.command), warn=True, previous='debug')
             # if invalid order
             except ValueError:
-              rospy.logerr("Received unkown command : {}".format(msg.command))
+                rospy.logerr("Received unkown command : {}".format(msg.command))
 
 
 if __name__ == '__main__':

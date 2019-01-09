@@ -11,7 +11,7 @@ int8 LAND=5     # land on currently tracked target
 
 # Target pose [m]
 # Optionnal, used by commands REACH, FIND and TRACK
-geometry_msgs/Pose pose
+geometry_msgs/Point position
 
 # Precision of the target location [m]
 # Optionnal, used by commands FIND and TRACK

@@ -37,6 +37,9 @@ BUNDLE_DETECTION_TIMEOUT = 1.  # [s] if a bundle detection is older than this, w
 FLIGHT_ALTITUDE = 1.  # [m] general altitude of flight for the drone
 FLIGHT_PRECISION = 0.20  # [m] tolerance to reach specified target
 
+LANDING_FACTOR = 0.95  # at each iteration, the drone multiply its distance to target by this factor
+LANDING_MIN_ALTITUDE = 0.20  # [m] below this altitude, the drone stops flying and tries to land
+
 
 class FlightManager:
     def __init__(self):
@@ -191,17 +194,41 @@ class FlightManager:
         """
         Drone has to land on bundle.
         """
-        # continue tracking target, decrease altitude smoothly, then land on target
-        # TODO
+        # compute distance of drone to target
+        # # either consider only difference of altitudes
+        # bundle_pose = self.tf_buffer.transform(self.bundle_pose, FRAME_WORLD)
+        # drone_position = self.tf_buffer.lookup_transform(FRAME_WORLD, FRAME_DRONE, rospy.Duration(0)).transform.translation
+        # distance = drone_position.z - bundle_pose.pose.position.z
+        # or consider euclidian distance between drone and target
+        error = self.tf_buffer.transform(self.bundle_pose, FRAME_DRONE).pose.position
+        error = np.array([error.x, error.y, error.z])
+        distance = np.sqrt(np.sum(error ** 2))
+
+        # continue tracking target and decrease altitude smoothly
+        if self.bundle_pose_received:
+            # compute pose above bundle and reduce altitude to get closer to it
+            above_bundle_pose = self.tf_buffer.transform(self.bundle_pose, FRAME_WORLD)
+            above_bundle_pose.pose.position.z += LANDING_FACTOR * distance
+            # send tracking pose to navigation
+            nav_target = NavigationGoal()
+            nav_target.header = above_bundle_pose.header
+            nav_target.pose = above_bundle_pose.pose
+            nav_target.mode = NavigationGoal.ABSOLUTE
+            self.nav_pub.publish(nav_target)
+            self.bundle_pose_received = False
 
         # if drone is landing or has landed, go to OFF state
         if self.drone_state in {1, 2, 8}:
-            rospy.loginfo("Landed on target.")
+            rospy.loginfo("Landing on target...")
             self._change_state(STATE.OFF)
 
         # if last bundle detection is too old, we have probably lost the target : we have to find it again
         elif (rospy.Time.now() - self.bundle_pose.header.stamp).to_sec() > BUNDLE_DETECTION_TIMEOUT:
             self._change_state(STATE.FINDING, warn=True)
+
+        # if very close to target, land
+        elif distance < LANDING_MIN_ALTITUDE:
+            self.land_pub.publish()
 
     # =======================    Utilities   =======================
 

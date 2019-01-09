@@ -6,7 +6,8 @@ import numpy as np
 import rospy
 import tf2_ros
 from std_msgs.msg import Empty
-from geometry_msgs.msg import PoseStamped, PointStamped
+# from geometry_msgs.msg import PoseStamped, PointStamped
+from tf2_geometry_msgs import PoseStamped, PointStamped
 from ar_track_alvar_msgs.msg import AlvarMarkers
 from ardrone_autonomy.msg import Navdata
 
@@ -250,6 +251,13 @@ class FlightManager:
         Receive new order.
         :param msg: ArdroneCommand msg
         """
+        # check command validity
+        try:
+            _ = STATE(abs(msg.command))
+        except ValueError:
+            rospy.logerr("Received unkown command : {}".format(msg.command))
+            return
+
         # save command
         self.command = msg.command
 
@@ -264,15 +272,16 @@ class FlightManager:
         # move to specified location
         elif msg.command in {ArdroneCommand.REACH, ArdroneCommand.FIND, ArdroneCommand.TRACK}:
             # save message
-            self.target_point.point = msg.position
             self.target_point.header = msg.header
+            self.target_point.point = msg.position
             self.target_point_precision = msg.precision
             # if frame_id is not defined, assume it is the world frame
             if not self.target_point.header.frame_id:
                 self.target_point.header.frame_id = FRAME_WORLD
-            # # if z component is 0 in world frame, set it to default height
-            # if not self.target_point.point.z and self.target_point.header.frame_id == FRAME_WORLD:
-            #     self.target_point.point.z = FLIGHT_ALTITUDE
+            # transform target position to world frame
+            self.target_point = self.tf_buffer.transform(self.target_point, FRAME_WORLD)
+            # fly at a specific altitude from target point
+            self.target_point.point.z += FLIGHT_ALTITUDE
             # notify msg reception and change state
             self.target_point_received = True
             self._change_state(STATE.STANDBY, previous='')
@@ -282,14 +291,9 @@ class FlightManager:
             if self.state != STATE.TRACKING:
                 rospy.logerr("No target currently tracked : cannot change to LANDING state.")
 
-        # invalid order or debug mode
-        else:
-            # debug mode to force state change when sending the negative order
-            try:
-                self._change_state(STATE(-msg.command), warn=True, previous='debug')
-            # if invalid order
-            except ValueError:
-                rospy.logerr("Received unkown command : {}".format(msg.command))
+        # debug mode to force state change when sending the negative order
+        elif msg.command < 0:
+            self._change_state(STATE(-msg.command), warn=True, previous='debug')
 
 
 if __name__ == '__main__':

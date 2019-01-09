@@ -29,7 +29,7 @@ FRAME_TARGET = "/marker_{}".format(BUNDLE_ID)  # target bundle to follow/land on
 FRAME_DRONE = "/ardrone_base_link"  # drone
 
 # time parameters
-LOOP_RATE = 10.  #  [Hz] rate of the ROS node loop
+LOOP_RATE = 10.  # [Hz] rate of the ROS node loop
 BUNDLE_DETECTION_TIMEOUT = 1.  # [s] if a bundle detection is older than this, we go back to FINDING state
 
 FLIGHT_ALTITUDE = 1.  # [m] general altitude of flight for the drone
@@ -38,6 +38,7 @@ FLIGHT_PRECISION = 0.20  # [m] tolerance to reach specified target
 
 class FlightManager:
     def __init__(self):
+        """ Object constructor. """
         # ROS subscribers and publishers
         self.takeoff_pub = rospy.Publisher("/ardrone/takeoff", Empty, queue_size=1)
         self.land_pub = rospy.Publisher("/ardrone/land", Empty, queue_size=1)
@@ -53,11 +54,14 @@ class FlightManager:
         # command and current state of the drone
         self.command = ArdroneCommand.OFF
         self.state = STATE.OFF
+        self._change_state(STATE.OFF, previous='')
         self.drone_state = 0  # Unknown (see https://ardrone-autonomy.readthedocs.io/en/latest/reading.html)
+
         # target pose (approximate location of bundle)
         self.target_pose = PoseStamped()
         self.target_pose_precision = 0.
         self.target_pose_received = False
+
         # detected bundle pose
         self.bundle_pose = PoseStamped()
         self.bundle_pose_received = False
@@ -65,6 +69,7 @@ class FlightManager:
         rospy.loginfo("Flight manager successfully initialized and ready.")
 
     def run(self):
+        """ Main loop running until node is killed. """
         # loop at given rate
         rate = rospy.Rate(LOOP_RATE)
         while not rospy.is_shutdown():
@@ -167,6 +172,7 @@ class FlightManager:
         Drone has to follow a specific bundle or marker published by ar_track_alvar
         """
         # if new bundle detection has been received, send its pose to navigation node
+        # TODO : modify flight height of the bundle
         if self.bundle_pose_received:
             nav_target = NavigationGoal()
             nav_target.header.stamp = self.bundle_pose.header.stamp
@@ -193,7 +199,7 @@ class FlightManager:
 
         # if drone is landing or has landed, go to OFF state
         if self.drone_state in {1, 2, 8}:
-            rospy.loginfo("Landing on target...")
+            rospy.loginfo("Landed on target.")
             self._change_state(STATE.OFF)
 
         # if last bundle detection is too old, we have probably lost the target : we have to find it again
@@ -274,6 +280,15 @@ class FlightManager:
         elif msg.command == ArdroneCommand.LAND:
             if self.state != STATE.TRACKING:
                 rospy.logerr("No target currently tracked : cannot change to LANDING state.")
+
+        # invalid order or debug mode
+        else:
+            # debug mode to force state change when sending the negative order
+            try:
+                self._change_state(STATE(-msg.command), warn=True, previous='debug')
+            # if invalid order
+            except ValueError:
+              rospy.logerr("Received unkown command : {}".format(msg.command))
 
 
 if __name__ == '__main__':

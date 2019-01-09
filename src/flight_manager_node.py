@@ -167,11 +167,14 @@ class FlightManager:
         Drone has to follow a specific bundle or marker published by ar_track_alvar
         """
         # if new bundle detection has been received, send its pose to navigation node
-        # TODO : modify flight height of the bundle
         if self.bundle_pose_received:
+            # compute pose at FLIGHT_ALTITUDE meters above bundle pose
+            above_bundle_pose = self.tf_buffer.transform(self.bundle_pose, FRAME_WORLD)
+            above_bundle_pose.pose.position.z += FLIGHT_ALTITUDE
+            # send tracking pose to navigation
             nav_target = NavigationGoal()
-            nav_target.header = self.bundle_pose.header
-            nav_target.pose = self.bundle_pose.pose
+            nav_target.header = above_bundle_pose.header
+            nav_target.pose = above_bundle_pose.pose
             nav_target.mode = NavigationGoal.ABSOLUTE
             self.nav_pub.publish(nav_target)
             self.bundle_pose_received = False

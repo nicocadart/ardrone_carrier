@@ -34,6 +34,8 @@ FRAME_WORLD = "odom"  # base frame
 LOOP_RATE = 10.  # [Hz] rate of the ROS node loop
 BUNDLE_DETECTION_TIMEOUT = 1.  # [s] if a bundle detection is older than this, we go back to FINDING state
 
+BUNDLE_FINDING_DISTANCE_FACTOR = 0.10  # [m] how much we increase distance from approximate target position at each step
+
 FLIGHT_ALTITUDE = 1.  # [m] general altitude of flight for the drone
 FLIGHT_PRECISION = 0.20  # [m] tolerance to reach specified target
 
@@ -62,10 +64,12 @@ class FlightManager:
         self._change_state(STATE.OFF, previous='')  # used only to display state and set LED animations
         self.drone_state = 0  # Unknown (see https://ardrone-autonomy.readthedocs.io/en/latest/reading.html)
 
-        # target position (approximate location of bundle)
+        # target position (approximate location of bundle, in world frame)
         self.target_point = PointStamped()
         self.target_point_precision = 0.
         self.target_point_received = False
+        self.research_pose = PoseStamped()  # pose where we are actually looking for the target
+        self.research_pose_count = 0  # number of intermediary pose we already visited
 
         # detected bundle pose
         self.bundle_pose = PoseStamped()
@@ -162,8 +166,34 @@ class FlightManager:
 
         # otherwise, fly around to find target
         else:
-            # TODO
-            pass
+            # compute distance to current intermediary target
+            error = self.tf_buffer.transform(self.research_pose, FRAME_DRONE).pose.position
+            distance = np.sqrt(np.sum(np.array([error.x, error.y, error.z]) ** 2))
+
+            # if intermediary target has been reached without finding target, go to another point
+            if (self.research_pose_count == 0) or (distance < FLIGHT_PRECISION):
+                self.research_pose_count += 1
+                research_radius = BUNDLE_FINDING_DISTANCE_FACTOR * self.research_pose_count
+
+                # if research radius is becoming too large, we have probably missed the target. Try again.
+                if research_radius > self.target_point_precision:
+                    self.research_pose_count = 0
+                    research_radius = 0
+
+                # set next intermediary goal
+                self.research_pose = PoseStamped()
+                self.research_pose.header.stamp = rospy.Time.now()
+                self.research_pose.header.frame_id = FRAME_WORLD
+                self.research_pose.pose.position = self.target_point.point
+                self.research_pose.pose.position.x += research_radius * np.sin(self.research_pose_count * np.pi / 2)
+                self.research_pose.pose.position.y += research_radius * np.cos(self.research_pose_count * np.pi / 2)
+
+                # send research pose to navigation
+                nav_target = NavigationGoal()
+                nav_target.header = self.research_pose.header
+                nav_target.pose = self.research_pose.pose
+                nav_target.mode = NavigationGoal.ABSOLUTE
+                self.nav_pub.publish(nav_target)
 
     def tracking_loop(self):
         """
@@ -249,8 +279,10 @@ class FlightManager:
         # change state
         self.state = new_state
 
-        # set LED animations depending on new state
-        # TODO
+        # specific behavior when reaching a given state
+        # TODO : set LED animations depending on new state
+        if new_state == STATE.FINDING:
+            self.research_pose_count = 0
 
     # =======================  ROS callbacks =======================
 

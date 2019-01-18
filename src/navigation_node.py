@@ -34,6 +34,11 @@ TF_TARGET = 'pose_goal' # Not a real tf but should be defined by target msg
 
 LOOP_RATE = 10.  #  [Hz] rate of the ROS node loop
 
+
+def normalize_angle(rad):
+    return ((rad+np.pi)%(2*np.pi)) - np.pi
+
+
 class ArdroneNav:
     """ Class for Ardrone navigation: getting target position (and estimated one) and
         return velocity command to the drone with PID control"""
@@ -80,6 +85,8 @@ class ArdroneNav:
         self.vel_constrain = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
 
         self.mode = 0 # RELATIVE or ABSOLUTE for target
+
+        self.bool_command = False
 
 
 
@@ -143,13 +150,17 @@ class ArdroneNav:
 
     def send_command(self):
         """publish the command twist msg to cmd_vel/"""
-        self.pub_command.publish(self.command)
+
+        # self.pub_command.publish(self.command)
+        if self.bool_command:
+            print(self.command)
+            stop
 
 
     def read_target_pose(self, msg_pose):
         """Get target position in specific frame. We assume that target is already expressed in the
         control frame """
-
+        self.bool_command = True
         self.tf_target = msg_pose.header.frame_id
 
         # define mode for target, absolute or relative coordinates
@@ -157,9 +168,10 @@ class ArdroneNav:
 
         # Get position of target in target_frame
         self.target_pose.pose = msg_pose.pose
+        self.target_pose.header.frame_id = msg_pose.header.frame_id
 
         # Check if we ask for angle command
-        if self.target_pose.pose.orientation.quaternion == [0.0, 0.0, 0.0, 0.0]:
+        if self.target_pose.pose.orientation == [0.0, 0.0, 0.0, 0.0]:
             self.no_quaternion = True
 
         # According to mode, define target pose in referential
@@ -169,6 +181,7 @@ class ArdroneNav:
         elif self.mode == NavigationGoal.RELATIVE:
             print('RELATIVE MODE')
 
+            # TODO: reset angle PIDs
             # get position of drone in target frame (as transform between origins is the same)
             transform = self.tf_buffer.lookup_transform(self.tf_target,
                                                         self.tf_ardrone,
@@ -188,23 +201,27 @@ class ArdroneNav:
             raise NotImplementedError
 
         # Express target pos in drone frame, which gives the error
-        command_pos = self.tf_buffer.transform(self.target_pose, self.tf_ardrone)
+        command_pose = self.tf_buffer.transform(self.target_pose, self.tf_ardrone)
 
         # Transform quaternion into Euler angle
-        quaternion = self.command_pose.pose.orientation
+        quaternion = command_pose.pose.orientation
 
         if not self.no_quaternion:
             rotation = euler_from_quaternion((quaternion.x, quaternion.y, quaternion.z,
                                               quaternion.w))
-            # 2PI capping
-            rotation = [angle%(2*np.pi) for angle in rotation]
+            # [-PI, PI[ capping
+            rotation = [normalize_angle(angle) for angle in rotation]
         else:
             rotation = [0.0, 0.0, 0.0]
 
 
         # Get orientation and position into a structure for PID control
         self.command_pose['orientation'] = rotation
-        self.command_pose['position'] = command_pos.pose.position
+        self.command_pose['position'] = [command_pose.pose.position.x,
+                                         command_pose.pose.position.y,
+                                         command_pose.pose.position.z]
+
+        print('Error', self.command_pose)
 
 
     def update(self):
@@ -233,8 +250,6 @@ class ArdroneNav:
         rate = rospy.Rate(LOOP_RATE)
         while not rospy.is_shutdown():
             self.update()
-            print('update')
-            print(self.target_pose)
             rate.sleep()
 
 

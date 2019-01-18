@@ -159,13 +159,15 @@ class ArdroneNav:
         self.target_pose.pose = msg_pose.pose
 
         # Check if we ask for angle command
-        if self.target_pose.pose.orientation.quaternion = [0.0, 0.0, 0.0, 0.0]:
+        if self.target_pose.pose.orientation.quaternion == [0.0, 0.0, 0.0, 0.0]:
             self.no_quaternion = True
 
         # According to mode, define target pose in referential
         if self.mode == NavigationGoal.ABSOLUTE:
             # This does nothing
+            print('ABSOLUTE MODE')
         elif self.mode == NavigationGoal.RELATIVE:
+            print('RELATIVE MODE')
 
             # get position of drone in target frame (as transform between origins is the same)
             transform = self.tf_buffer.lookup_transform(self.tf_target,
@@ -213,14 +215,14 @@ class ArdroneNav:
 
         for id in range(len(self.pids['position'])):
            command['position'][id] = self.pids['position'][id].compute_command(\
-                                                                self.command_pos['position'][id])
+                                                                self.command_pose['position'][id])
 
         # if command for angle is not null, compute angle command
         if not self.no_quaternion:
 
             for id in range(len(self.pids['orientation'])):
                 command['orientation'][id] = self.pids['orientation'][id].compute_command(\
-                                                                    self.command_pos['orientation'][id])
+                                                                    self.command_pose['orientation'][id])
 
         # set and send command to the drone
         self.set_command(command)
@@ -232,6 +234,7 @@ class ArdroneNav:
         while not rospy.is_shutdown():
             self.update()
             print('update')
+            print(self.target_pose)
             rate.sleep()
 
 

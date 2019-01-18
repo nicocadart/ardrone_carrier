@@ -26,7 +26,7 @@ class STATE(IntEnum):
 
 # frames ids
 BUNDLE_ID = 3  # id of the master marker in the bundle
-FRAME_TARGET = "marker_{}".format(BUNDLE_ID)  # target bundle to follow/land on
+FRAME_TARGET = "ar_marker_{}".format(BUNDLE_ID)  # target bundle to follow/land on
 FRAME_DRONE = "ardrone_base_link"  # drone
 FRAME_WORLD = "odom"  # base frame
 
@@ -36,6 +36,8 @@ BUNDLE_DETECTION_TIMEOUT = 1.  # [s] if a bundle detection is older than this, w
 
 BUNDLE_FINDING_DISTANCE_FACTOR = 0.10  # [m] how much we increase distance from approximate target position at each step
 
+# Flight parameters
+TAKEOFF_ALLOWED = False  # if False, no takeoff order will be sent (Test mode)
 FLIGHT_ALTITUDE = 1.  # [m] general altitude of flight for the drone
 FLIGHT_PRECISION = 0.20  # [m] tolerance to reach specified target
 
@@ -158,6 +160,7 @@ class FlightManager:
         if self.bundle_pose_received:
             # if command was only to find target, reset order and standby
             if self.command == ArdroneCommand.FIND:
+                self.bundle_pose_received = False
                 self.command = ArdroneCommand.STANDBY
                 self._change_state(STATE.STANDBY)
             # if command was to track target, move on to next state
@@ -167,11 +170,15 @@ class FlightManager:
         # otherwise, fly around to find target
         else:
             # compute distance to current intermediary target
-            error = self.tf_buffer.transform(self.research_pose, FRAME_DRONE).pose.position
-            distance = np.sqrt(np.sum(np.array([error.x, error.y, error.z]) ** 2))
+            if self.research_pose_count > 0:
+                self.research_pose.header.stamp = rospy.Time(0)  # reset time to get transform no matter the timestamp
+                error = self.tf_buffer.transform(self.research_pose, FRAME_DRONE).pose.position
+                distance = np.sqrt(np.sum(np.array([error.x, error.y, error.z]) ** 2))
+            else:
+                distance = 0.
 
             # if intermediary target has been reached without finding target, go to another point
-            if (self.research_pose_count == 0) or (distance < FLIGHT_PRECISION):
+            if distance <= FLIGHT_PRECISION:
                 self.research_pose_count += 1
                 research_radius = BUNDLE_FINDING_DISTANCE_FACTOR * self.research_pose_count
 
@@ -182,7 +189,6 @@ class FlightManager:
 
                 # set next intermediary goal
                 self.research_pose = PoseStamped()
-                self.research_pose.header.stamp = rospy.Time.now()
                 self.research_pose.header.frame_id = FRAME_WORLD
                 self.research_pose.pose.position = self.target_point.point
                 self.research_pose.pose.position.x += research_radius * np.sin(self.research_pose_count * np.pi / 2)
@@ -191,6 +197,7 @@ class FlightManager:
                 # send research pose to navigation
                 nav_target = NavigationGoal()
                 nav_target.header = self.research_pose.header
+                nav_target.header.stamp = rospy.Time.now()
                 nav_target.pose = self.research_pose.pose
                 nav_target.mode = NavigationGoal.ABSOLUTE
                 self.nav_pub.publish(nav_target)
@@ -248,7 +255,7 @@ class FlightManager:
             self.bundle_pose_received = False
 
         # if drone is landing or has landed, go to OFF state
-        if self.drone_state in {1, 2, 8}:
+        if self.drone_state in {0, 1, 2, 8}:
             rospy.loginfo("Landing on target...")
             self._change_state(STATE.OFF)
 
@@ -291,20 +298,25 @@ class FlightManager:
         Update detected bundle pose.
         :param msg: AlvarMarkers msg
         """
-        # loop though detections and check if the interesting bundle has been detected
-        for bundle in msg.markers:
-            if bundle.id == BUNDLE_ID:
-                self.bundle_pose = bundle.pose
-                self.bundle_pose.header = bundle.header
-                self.bundle_pose_received = True
-                return
+        # only update bundle pose if we need it
+        if self.state in {STATE.FINDING, STATE.TRACKING, STATE.LANDING}:
+            # loop though detections and check if the interesting bundle has been detected
+            for bundle in msg.markers:
+                if bundle.id == BUNDLE_ID:
+                    self.bundle_pose = bundle.pose
+                    self.bundle_pose.header.stamp = bundle.header.stamp
+                    self.bundle_pose.header.frame_id = bundle.header.frame_id.strip('/')  # remove '/' in frame_id
+                    self.bundle_pose_received = True
+                    return
 
     def _navdata_callback(self, msg):
         """
         Get drone state.
         :param msg:  Navdata msg
         """
-        self.drone_state = msg.state
+        # update drone state (only if test mode is deactivated)
+        self.drone_state = msg.state if TAKEOFF_ALLOWED else 0
+        # check battery
         if msg.batteryPercent < 15.:
             rospy.logwarn("Low battery : {}%".format(msg.batteryPercent))
 
@@ -320,8 +332,7 @@ class FlightManager:
             rospy.logerr("Received unkown command : {}".format(msg.command))
             return
 
-        # save command
-        self.command = msg.command
+        valid_command = True
 
         # send landing order
         if msg.command == ArdroneCommand.OFF:
@@ -351,11 +362,33 @@ class FlightManager:
         # land on target
         elif msg.command == ArdroneCommand.LAND:
             if self.state != STATE.TRACKING:
+                valid_command = False
                 rospy.logerr("No target currently tracked : cannot change to LANDING state.")
 
         # debug mode to force state change when sending the negative order
         elif msg.command < 0:
+            if -msg.command == ArdroneCommand.REACH:
+                # save message
+                self.target_point.header = msg.header
+                self.target_point.point = msg.position
+                self.target_point_precision = msg.precision
+                # if frame_id is not defined, assume it is the world frame
+                if not self.target_point.header.frame_id:
+                    self.target_point.header.frame_id = FRAME_WORLD
+                # transform target position to world frame
+                self.target_point = self.tf_buffer.transform(self.target_point, FRAME_WORLD)
+                # fly at a specific altitude from target point
+                self.target_point.point.z += FLIGHT_ALTITUDE
+                # notify msg reception and change state
+                self.target_point_received = True
             self._change_state(STATE(-msg.command), warn=True, previous='debug')
+
+        else:
+            valid_command = False
+
+        # save command
+        if valid_command:
+            self.command = abs(msg.command)
 
 
 if __name__ == '__main__':

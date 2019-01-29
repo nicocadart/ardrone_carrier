@@ -32,6 +32,7 @@ TARGET_TOPIC_TYPE = NavigationGoal
 TF_ARDRONE = 'ardrone_base_link'
 TF_TARGET = 'pose_goal' # Not a real tf but should be defined by target msg
 
+TF_FIXED = 'odom'
 LOOP_RATE = 10.  #  [Hz] rate of the ROS node loop
 
 
@@ -51,6 +52,7 @@ class ArdroneNav:
         self.tf_listener = tf.TransformListener(self.tf_buffer)
         self.tf_ardrone = TF_ARDRONE
         self.tf_target = TF_TARGET
+        self.tf_fixed = TF_FIXED
 
 
         ####################
@@ -80,16 +82,17 @@ class ArdroneNav:
         self.command_pose = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
         # Target pose with Euler angle
 
-        self.errors = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
+        # self.errors = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
 
-        self.vel_constrain = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
+        self.vel_constrain = {'position': [1., 1., 1.], 'orientation': [0.7, 0.7, 0.7]}
 
         self.mode = 0 # RELATIVE or ABSOLUTE for target
 
         self.bool_command = False
 
+        self.has_started = False # node hasnt received any command yet (to avoid computing PID on null pos)
 
-
+        self.i_loop = 0
         ##########
         ## PID ###
         ##########
@@ -98,10 +101,11 @@ class ArdroneNav:
         self.no_quaternion = False
 
         # Differents weights for each composant
-        self.p = {'position': [0.2, 0.2, 0.2], 'orientation': [0.2, 0.2, 0.2]}
-        self.i = {'position': [0.3, 0.3, 0.3], 'orientation': [0.3, 0.3, 0.3]}
-        self.d = {'position': [0.1, 0.1, 0.1], 'orientation': [0.1, 0.1, 0.1]}
-        self.dt = {'position': [0.0001, 0.0001, 0.0001], 'orientation': [0.0001, 0.0001, 0.0001]}
+        self.p = {'position': [0.02, 0.02, 0.002], 'orientation': [0.00, 0.00, 0.00]}
+        self.i = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
+        self.d = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
+        self.dt = {'position': [1./LOOP_RATE, 1./LOOP_RATE, 1./LOOP_RATE],
+                   'orientation': [1./LOOP_RATE, 1./LOOP_RATE, 1./LOOP_RATE]}
 
         self.pids = {}
         self.pids['position'] = [PID(kp, ki, kd, dt) for (kp, ki,
@@ -143,7 +147,7 @@ class ArdroneNav:
         self.command.linear.x = vx*1000. # should be in mm/s
         self.command.linear.y = vy*1000.
         self.command.linear.z = vz*1000.
-        self.command.angular.x = (360.*rotX)/(2*np.pi) # should be in degree
+        self.command.angular.x = (360.*rotX)/(2*np.pi) # should be in degree/s
         self.command.angular.y = (360.*rotY)/(2*np.pi)
         self.command.angular.z = (360.*rotZ)/(2*np.pi)
 
@@ -151,15 +155,19 @@ class ArdroneNav:
     def send_command(self):
         """publish the command twist msg to cmd_vel/"""
 
-        # self.pub_command.publish(self.command)
+        self.pub_command.publish(self.command)
         if self.bool_command:
             print(self.command)
-            stop
+            self.bool_command = False
 
 
     def read_target_pose(self, msg_pose):
         """Get target position in specific frame. We assume that target is already expressed in the
         control frame """
+
+        # First time a command has been received
+        self.has_started = True
+
         self.bool_command = True
         self.tf_target = msg_pose.header.frame_id
 
@@ -168,7 +176,7 @@ class ArdroneNav:
 
         # Get position of target in target_frame
         self.target_pose.pose = msg_pose.pose
-        self.target_pose.header.frame_id = msg_pose.header.frame_id
+        self.target_pose.header.frame_id = self.tf_target
 
         # Check if we ask for angle command
         if self.target_pose.pose.orientation == [0.0, 0.0, 0.0, 0.0]:
@@ -191,7 +199,7 @@ class ArdroneNav:
             self.target_pose.pose.position.y += transform.transform.translation.y
             self.target_pose.pose.position.z += transform.transform.translation.z
 
-            # modulo pi caping before or after euler?
+            # TODO: check composition of quaternion
             self.target_pose.pose.orientation.x += transform.transform.rotation.x
             self.target_pose.pose.orientation.y += transform.transform.rotation.y
             self.target_pose.pose.orientation.z += transform.transform.rotation.z
@@ -200,6 +208,11 @@ class ArdroneNav:
         else:
             raise NotImplementedError
 
+        self.target_pose = self.tf_buffer.transform(self.target_pose, self.tf_fixed)
+
+
+    def compute_error(self):
+        """With target expressed in target frame, compute real time error with ardrone position, with tf"""
         # Express target pos in drone frame, which gives the error
         command_pose = self.tf_buffer.transform(self.target_pose, self.tf_ardrone)
 
@@ -221,7 +234,10 @@ class ArdroneNav:
                                          command_pose.pose.position.y,
                                          command_pose.pose.position.z]
 
-        print('Error', self.command_pose)
+        # DEBUG
+        self.i_loop += 1
+        if self.i_loop%50 == 0:
+            print('Error', self.command_pose)
 
 
     def update(self):
@@ -230,20 +246,33 @@ class ArdroneNav:
         # Set empty command
         command = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
 
-        for id in range(len(self.pids['position'])):
-           command['position'][id] = self.pids['position'][id].compute_command(\
-                                                                self.command_pose['position'][id])
+        # self.no_quaternion = False
 
-        # if command for angle is not null, compute angle command
-        if not self.no_quaternion:
+        # Check if we have received a first pose goal
+        if self.has_started:
+            # Compute current error (stored in command_pose)
+            self.compute_error()
 
-            for id in range(len(self.pids['orientation'])):
-                command['orientation'][id] = self.pids['orientation'][id].compute_command(\
-                                                                    self.command_pose['orientation'][id])
+            # Compute position command
+            for p_id in range(len(self.pids['position'])):
+                command['position'][p_id] = self.pids['position'][p_id].compute_command(\
+                                                                self.command_pose['position'][p_id])
+
+            #TODO: remove angle
+
+            # if command for angle is not null, compute angle command
+            if not self.no_quaternion:
+                for p_id in range(len(self.pids['orientation'])):
+                    command['orientation'][p_id] = self.pids['orientation'][p_id].compute_command(\
+                                                            self.command_pose['orientation'][p_id])
+        # if no pose goal received, do nothing, send null command
+        else:
+            print('PID command hasnt started yet')
 
         # set and send command to the drone
         self.set_command(command)
         self.send_command()
+
 
     def run(self):
         # loop at given rate

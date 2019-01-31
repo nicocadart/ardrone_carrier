@@ -101,9 +101,9 @@ class ArdroneNav:
         self.no_quaternion = False
 
         # Differents weights for each composant
-        self.p = {'position': [0.02, 0.02, 0.002], 'orientation': [0.00, 0.00, 0.00]}
-        self.i = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
-        self.d = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
+        self.p = {'position': [0.001, 0.001, 0.002], 'orientation': [0.00, 0.00, 0.00]}
+        self.i = {'position': [0.001, 0.001, 0.002], 'orientation': [0.0, 0.0, 0.0]}
+        self.d = {'position': [0.001, 0.001, 0.002], 'orientation': [0.0, 0.0, 0.0]}
         self.dt = {'position': [1./LOOP_RATE, 1./LOOP_RATE, 1./LOOP_RATE],
                    'orientation': [1./LOOP_RATE, 1./LOOP_RATE, 1./LOOP_RATE]}
 
@@ -140,9 +140,9 @@ class ArdroneNav:
         vy = command['position'][1]
         vz = command['position'][2]
 
-        rotX = command['position'][0]
-        rotY = command['position'][1]
-        rotZ = command['position'][2]
+        rotX = command['orientation'][0]
+        rotY = command['orientation'][1]
+        rotZ = command['orientation'][2]
 
         self.command.linear.x = vx*1000. # should be in mm/s
         self.command.linear.y = vy*1000.
@@ -157,7 +157,7 @@ class ArdroneNav:
 
         self.pub_command.publish(self.command)
         if self.bool_command:
-            print(self.command)
+            print('Command:', self.command)
             self.bool_command = False
 
 
@@ -179,7 +179,11 @@ class ArdroneNav:
         self.target_pose.header.frame_id = self.tf_target
 
         # Check if we ask for angle command
-        if self.target_pose.pose.orientation == [0.0, 0.0, 0.0, 0.0]:
+        if ([self.target_pose.pose.orientation.x,
+             self.target_pose.pose.orientation.y,
+             self.target_pose.pose.orientation.z,
+             self.target_pose.pose.orientation.w] == [0.0, 0.0, 0.0, 0.0]):
+
             self.no_quaternion = True
 
         # According to mode, define target pose in referential
@@ -237,6 +241,7 @@ class ArdroneNav:
         # DEBUG
         self.i_loop += 1
         if self.i_loop%50 == 0:
+            print(self.no_quaternion)
             print('Error', self.command_pose)
 
 
@@ -245,8 +250,6 @@ class ArdroneNav:
 
         # Set empty command
         command = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
-
-        # self.no_quaternion = False
 
         # Check if we have received a first pose goal
         if self.has_started:

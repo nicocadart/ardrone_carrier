@@ -135,7 +135,8 @@ class ArdroneNav:
 
     def set_command(self, command):
         """Define the command msg (Twist) to be published to the drone"""
-
+        # WARNING: cmd_vel is not the wanted velocity we want the drone to have: only command +-1 ...
+        # WARNING: angular.x, angular.y should be zero, except in hover mode
         vx = command['position'][0]
         vy = command['position'][1]
         vz = command['position'][2]
@@ -148,8 +149,11 @@ class ArdroneNav:
         self.command.linear.y = vy*1000.
         self.command.linear.z = vz*1000.
         self.command.angular.x = (360.*rotX)/(2*np.pi) # should be in degree/s
-        self.command.angular.y = (360.*rotY)/(2*np.pi)
-        self.command.angular.z = (360.*rotZ)/(2*np.pi)
+        self.command.angular.y = 0.0
+        self.command.angular.z = 0.0
+
+        # self.command.angular.y = (360.*rotY)/(2*np.pi)
+        # self.command.angular.z = (360.*rotZ)/(2*np.pi)
 
 
     def send_command(self):

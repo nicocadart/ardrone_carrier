@@ -101,9 +101,9 @@ class ArdroneNav:
         self.no_quaternion = False
 
         # Differents weights for each composant
-        self.p = {'position': [0.001, 0.001, 0.002], 'orientation': [0.00, 0.00, 0.00]}
-        self.i = {'position': [0.001, 0.001, 0.002], 'orientation': [0.0, 0.0, 0.0]}
-        self.d = {'position': [0.001, 0.001, 0.002], 'orientation': [0.0, 0.0, 0.0]}
+        self.p = {'position': [0.5, 0.5, 2.], 'orientation': [0.0, 0.0, 0.0]}
+        self.i = {'position': [0.1, 0.1, 0.2], 'orientation': [0.0, 0.0, 0.0]}
+        self.d = {'position': [0.1, 0.1, 0.2], 'orientation': [0.0, 0.0, 0.0]}
         self.dt = {'position': [1./LOOP_RATE, 1./LOOP_RATE, 1./LOOP_RATE],
                    'orientation': [1./LOOP_RATE, 1./LOOP_RATE, 1./LOOP_RATE]}
 
@@ -145,15 +145,12 @@ class ArdroneNav:
         rotY = command['orientation'][1]
         rotZ = command['orientation'][2]
 
-        self.command.linear.x = vx*1000. # should be in mm/s
-        self.command.linear.y = vy*1000.
-        self.command.linear.z = vz*1000.
-        self.command.angular.x = (360.*rotX)/(2*np.pi) # should be in degree/s
+        self.command.linear.x = vx # should be in mm/s
+        self.command.linear.y = vy
+        self.command.linear.z = vz
+        self.command.angular.x = 0.0
         self.command.angular.y = 0.0
-        self.command.angular.z = 0.0
-
-        # self.command.angular.y = (360.*rotY)/(2*np.pi)
-        # self.command.angular.z = (360.*rotZ)/(2*np.pi)
+        self.command.angular.z = rotZ # should be in degree/s
 
 
     def send_command(self):

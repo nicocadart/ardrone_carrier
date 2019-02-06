@@ -7,6 +7,7 @@ import rospy
 import tf2_ros
 from std_msgs.msg import Empty
 # from geometry_msgs.msg import PoseStamped, PointStamped
+from geometry_msgs.msg import Point
 from tf2_geometry_msgs import PoseStamped, PointStamped
 from ar_track_alvar_msgs.msg import AlvarMarkers
 from ardrone_autonomy.msg import Navdata
@@ -54,7 +55,7 @@ class FlightManager:
         self.nav_pub = rospy.Publisher("/pose_goal", NavigationGoal, queue_size=1)
         self.command_sub = rospy.Subscriber("/command", ArdroneCommand, self._command_callback, queue_size=5)
         self.bundle_sub = rospy.Subscriber("/ar_pose_marker", AlvarMarkers, self._bundle_callback, queue_size=5)
-        self.navdata_sub = rospy.Subscriber("/ardrone/navdata", Navdata, self._navdata_callback, queue_size=1)
+        self.navdata_sub = rospy.Subscriber("/ardrone/navdata", Navdata, self._navdata_callback, queue_size=5)
 
         # TF management
         self.tf_buffer = tf2_ros.Buffer()
@@ -122,7 +123,7 @@ class FlightManager:
             self.takeoff_pub.publish()
 
         # if drone is hovering, go to next state if necessary
-        elif self.command in {ArdroneCommand.REACH, ArdroneCommand.FIND, ArdroneCommand.TRACK}:
+        elif self.command in {ArdroneCommand.REACH, ArdroneCommand.FIND, ArdroneCommand.TRACK, ArdroneCommand.LAND}:
             self._change_state(STATE.REACHING)
 
     def reaching_loop(self):
@@ -131,12 +132,12 @@ class FlightManager:
         """
         # if new target has been received, send its pose to navigation node
         if self.target_point_received:
+            self.target_point_received = False
             nav_target = NavigationGoal()
             nav_target.header = self.target_point.header
             nav_target.pose.position = self.target_point.point
             nav_target.mode = NavigationGoal.ABSOLUTE
             self.nav_pub.publish(nav_target)
-            self.target_point_received = False
 
         # compute distance to target
         distance_to_target = self.tf_buffer.transform(self.target_point, FRAME_DRONE).point
@@ -149,7 +150,7 @@ class FlightManager:
                 self.command = ArdroneCommand.STANDBY
                 self._change_state(STATE.STANDBY)
             # if command was to find or track target, move on to next state
-            elif self.command in {ArdroneCommand.FIND, ArdroneCommand.TRACK}:
+            elif self.command in {ArdroneCommand.FIND, ArdroneCommand.TRACK, ArdroneCommand.LAND}:
                 self._change_state(STATE.FINDING)
 
     def finding_loop(self):
@@ -158,13 +159,13 @@ class FlightManager:
         """
         # if new bundle detection has been received, target has been found !
         if self.bundle_pose_received:
+            self.bundle_pose_received = False
             # if command was only to find target, reset order and standby
             if self.command == ArdroneCommand.FIND:
-                self.bundle_pose_received = False
                 self.command = ArdroneCommand.STANDBY
                 self._change_state(STATE.STANDBY)
             # if command was to track target, move on to next state
-            elif self.command == ArdroneCommand.TRACK:
+            elif self.command in {ArdroneCommand.TRACK, ArdroneCommand.LAND}:
                 self._change_state(STATE.TRACKING)
 
         # otherwise, fly around to find target
@@ -208,6 +209,7 @@ class FlightManager:
         """
         # if new bundle detection has been received, send its pose to navigation node
         if self.bundle_pose_received:
+            self.bundle_pose_received = False
             # compute pose at FLIGHT_ALTITUDE meters above bundle pose
             above_bundle_pose = self.tf_buffer.transform(self.bundle_pose, FRAME_WORLD)
             above_bundle_pose.pose.position.z += FLIGHT_ALTITUDE
@@ -217,7 +219,6 @@ class FlightManager:
             nav_target.pose = above_bundle_pose.pose
             nav_target.mode = NavigationGoal.ABSOLUTE
             self.nav_pub.publish(nav_target)
-            self.bundle_pose_received = False
 
         # if last bundle detection is too old, we have probably lost the target : we have to find it again
         if (rospy.Time.now() - self.bundle_pose.header.stamp).to_sec() > BUNDLE_DETECTION_TIMEOUT:
@@ -243,6 +244,7 @@ class FlightManager:
 
         # continue tracking target and decrease altitude smoothly
         if self.bundle_pose_received:
+            self.bundle_pose_received = False
             # compute pose above bundle and reduce altitude to get closer to it
             above_bundle_pose = self.tf_buffer.transform(self.bundle_pose, FRAME_WORLD)
             above_bundle_pose.pose.position.z += LANDING_FACTOR * distance
@@ -252,7 +254,6 @@ class FlightManager:
             nav_target.pose = above_bundle_pose.pose
             nav_target.mode = NavigationGoal.ABSOLUTE
             self.nav_pub.publish(nav_target)
-            self.bundle_pose_received = False
 
         # if drone is landing or has landed, go to OFF state
         if self.drone_state in {0, 1, 2, 8}:
@@ -317,8 +318,8 @@ class FlightManager:
         # update drone state (only if test mode is deactivated)
         self.drone_state = msg.state if TAKEOFF_ALLOWED else 0
         # check battery
-        if msg.batteryPercent < 15.:
-            rospy.logwarn("Low battery : {}%".format(msg.batteryPercent))
+        if msg.batteryPercent < 15. and msg.header.seq % 200:
+            rospy.logwarn("Low battery : {}% !".format(msg.batteryPercent))
 
     def _command_callback(self, msg):
         """
@@ -342,8 +343,14 @@ class FlightManager:
         elif msg.command == ArdroneCommand.STANDBY:
             self._change_state(STATE.STANDBY, previous='')
 
+        # land on target
+        elif msg.command == ArdroneCommand.LAND and msg.position == Point() and msg.precision == 0.:
+            if self.state != STATE.TRACKING:
+                valid_command = False
+                rospy.logerr("No target currently tracked : cannot change to LANDING state.")
+
         # move to specified location
-        elif msg.command in {ArdroneCommand.REACH, ArdroneCommand.FIND, ArdroneCommand.TRACK}:
+        elif msg.command in {ArdroneCommand.REACH, ArdroneCommand.FIND, ArdroneCommand.TRACK, ArdroneCommand.LAND}:
             # save message
             self.target_point.header = msg.header
             self.target_point.point = msg.position
@@ -358,12 +365,6 @@ class FlightManager:
             # notify msg reception and change state
             self.target_point_received = True
             self._change_state(STATE.STANDBY, previous='')
-
-        # land on target
-        elif msg.command == ArdroneCommand.LAND:
-            if self.state != STATE.TRACKING:
-                valid_command = False
-                rospy.logerr("No target currently tracked : cannot change to LANDING state.")
 
         # debug mode to force state change when sending the negative order
         elif msg.command < 0:

@@ -35,6 +35,10 @@ TF_TARGET = 'pose_goal' # Not a real tf but should be defined by target msg
 TF_FIXED = 'odom'
 LOOP_RATE = 10.  #  [Hz] rate of the ROS node loop
 
+TARGET_THRESHOLD_POSE = 5e-2
+TARGET_THRESHOLD_ORIENTATION = np.pi/18.
+TARGET_THRESHOLD_SPEED = 0.1
+
 
 def normalize_angle(rad):
     return ((rad+np.pi)%(2*np.pi)) - np.pi
@@ -92,6 +96,8 @@ class ArdroneNav:
 
         self.has_started = False # node hasnt received any command yet (to avoid computing PID on null pos)
 
+        self.has_reached_target = False # When reaching target with a specific threshold, stop the PID
+
         self.i_loop = 0
         ##########
         ## PID ###
@@ -102,7 +108,7 @@ class ArdroneNav:
 
         # Differents weights for each composant
         self.p = {'position': [0.5, 0.5, 2.], 'orientation': [0.0, 0.0, 0.0]}
-        self.i = {'position': [0.1, 0.1, 0.2], 'orientation': [0.0, 0.0, 0.0]}
+        self.i = {'position': [0.1, 0.05, 0.3], 'orientation': [0.0, 0.0, 0.0]}
         self.d = {'position': [0.1, 0.1, 0.2], 'orientation': [0.0, 0.0, 0.0]}
         self.dt = {'position': [1./LOOP_RATE, 1./LOOP_RATE, 1./LOOP_RATE],
                    'orientation': [1./LOOP_RATE, 1./LOOP_RATE, 1./LOOP_RATE]}
@@ -125,11 +131,15 @@ class ArdroneNav:
             vel_cstr = self.vel_constrain['position'][id]
             if vel_cstr != 0.0:
                 self.pids['position'][id].activate_command_saturation(-vel_cstr, vel_cstr)
+                print(self.pids['position'][id].saturation_activation)
 
         for id in range(len(self.pids['orientation'])):
             vel_cstr = self.vel_constrain['orientation'][id]
             if vel_cstr != 0.0:
                 self.pids['orientation'][id].activate_command_saturation(-vel_cstr, vel_cstr)
+                print(self.pids['orientation'][id].saturation_activation)
+
+
 
 
 
@@ -153,6 +163,17 @@ class ArdroneNav:
         self.command.angular.z = rotZ # should be in degree/s
 
 
+    def set_hover(self):
+        """ set command to 0 for hovering"""
+
+        self.command.linear.x = 0.0 # should be in mm/s
+        self.command.linear.y = 0.0
+        self.command.linear.z = 0.0
+        self.command.angular.x = 0.0
+        self.command.angular.y = 0.0
+        self.command.angular.z = 0.0 # should be in degree/s
+
+
     def send_command(self):
         """publish the command twist msg to cmd_vel/"""
 
@@ -168,6 +189,7 @@ class ArdroneNav:
 
         # First time a command has been received
         self.has_started = True
+        self.has_reached_target = False
 
         self.bool_command = True
         self.tf_target = msg_pose.header.frame_id
@@ -253,7 +275,7 @@ class ArdroneNav:
         command = {'position': [0.0, 0.0, 0.0], 'orientation': [0.0, 0.0, 0.0]}
 
         # Check if we have received a first pose goal
-        if self.has_started:
+        if self.has_started and not self.has_reached_target:
             # Compute current error (stored in command_pose)
             self.compute_error()
 
@@ -269,12 +291,24 @@ class ArdroneNav:
                 for p_id in range(len(self.pids['orientation'])):
                     command['orientation'][p_id] = self.pids['orientation'][p_id].compute_command(\
                                                             self.command_pose['orientation'][p_id])
-        # if no pose goal received, do nothing, send null command
-        else:
-            print('PID command hasnt started yet')
 
-        # set and send command to the drone
-        self.set_command(command)
+            # set and send command to the drone
+            self.set_command(command)
+
+            if np.sqrt(command['position'][0]**2 + command['position'][1]**2 + command['position'][2]**2) < TARGET_THRESHOLD_POSE and\
+                np.abs(command['orientation'][2]) <  TARGET_THRESHOLD_ORIENTATION:
+                self.has_reached_target = True
+
+        # if no pose goal received, do nothing, send null command
+        elif not self.has_started:
+            print('PID command hasnt started yet')
+        elif self.has_started and self.has_reached_target:
+            print('Target reached !')
+            self.set_hover()
+        else:
+            print('Target already reached, too close for PID')
+            self.set_hover()
+
         self.send_command()
 
 

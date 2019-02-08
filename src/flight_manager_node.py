@@ -11,6 +11,7 @@ from geometry_msgs.msg import Point
 from tf2_geometry_msgs import PoseStamped, PointStamped
 from ar_track_alvar_msgs.msg import AlvarMarkers
 from ardrone_autonomy.msg import Navdata
+from ardrone_autonomy.srv import LedAnim, CamSelect
 
 from ardrone_carrier.msg import NavigationGoal, ArdroneCommand
 
@@ -49,7 +50,12 @@ LANDING_MIN_ALTITUDE = 0.20  # [m] below this altitude, the drone stops flying a
 class FlightManager:
     def __init__(self):
         """ Object constructor. """
+        rospy.loginfo("Waiting for 'ardrone_autonomy' node...")
+
         # ROS subscribers and publishers
+        rospy.wait_for_service("/ardrone/setcamchannel")
+        self.cam_srv = rospy.ServiceProxy("/ardrone/setcamchannel", CamSelect)
+        self.led_srv = rospy.ServiceProxy("/ardrone/setledanimation", LedAnim)
         self.takeoff_pub = rospy.Publisher("/ardrone/takeoff", Empty, queue_size=1)
         self.land_pub = rospy.Publisher("/ardrone/land", Empty, queue_size=1)
         self.nav_pub = rospy.Publisher("/pose_goal", NavigationGoal, queue_size=1)
@@ -77,6 +83,9 @@ class FlightManager:
         # detected bundle pose
         self.bundle_pose = PoseStamped()
         self.bundle_pose_received = False
+
+        # select bottom camera
+        self.cam_srv(1)
 
         rospy.loginfo("Flight manager successfully initialized and ready.")
 
@@ -284,13 +293,21 @@ class FlightManager:
         else:
             rospy.loginfo("{} --> {}".format(previous_state_str, new_state.name))
 
-        # change state
-        self.state = new_state
+        # GREEN when drone is ready and landed
+        if new_state == STATE.OFF:
+            self.led_srv(type=8, freq=1.0, duration=5)
 
-        # specific behavior when reaching a given state
-        # TODO : set LED animations depending on new state
+        # BLINK_GREEN_RED when we are looking for target
         if new_state == STATE.FINDING:
             self.research_pose_count = 0
+            self.led_srv(type=0, freq=3.0, duration=0)
+
+        # BLINK_GREEN when drone is tracking or landing on target
+        if new_state in {STATE.TRACKING, STATE.LANDING}:
+            self.led_srv(type=1, freq=3.0, duration=0)
+
+        # change state
+        self.state = new_state
 
     # =======================  ROS callbacks =======================
 
@@ -317,9 +334,10 @@ class FlightManager:
         """
         # update drone state (only if test mode is deactivated)
         self.drone_state = msg.state if TAKEOFF_ALLOWED else 0
-        # check battery
+        # check battery, and RED and print msg if it is too low
         if msg.batteryPercent < 15. and msg.header.seq % 200:
             rospy.logwarn("Low battery : {}% !".format(msg.batteryPercent))
+            self.led_srv(type=7, freq=1.0, duration=0)
 
     def _command_callback(self, msg):
         """
@@ -333,6 +351,8 @@ class FlightManager:
             rospy.logerr("Received unkown command : {}".format(msg.command))
             return
 
+        # ORANGE when receiving a new order
+        self.led_srv(type=3, freq=10, duration=1)
         valid_command = True
 
         # send landing order

@@ -12,9 +12,7 @@ ROS project fro an ardrone landing on mobile platform.
 
 ### flight_manager_node
 
-- complete state machine
-- add LED animations depending on current state
-- test node on drone
+- test node on drone with real navigation
 
 
 ## Ar Track Alvar

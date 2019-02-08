@@ -11,7 +11,7 @@ from geometry_msgs.msg import Point
 from tf2_geometry_msgs import PoseStamped, PointStamped
 from ar_track_alvar_msgs.msg import AlvarMarkers
 from ardrone_autonomy.msg import Navdata
-from ardrone_autonomy.srv import LedAnim
+from ardrone_autonomy.srv import LedAnim, CamSelect
 
 from ardrone_carrier.msg import NavigationGoal, ArdroneCommand
 
@@ -50,7 +50,11 @@ LANDING_MIN_ALTITUDE = 0.20  # [m] below this altitude, the drone stops flying a
 class FlightManager:
     def __init__(self):
         """ Object constructor. """
+        rospy.loginfo("Waiting for 'ardrone_autonomy' node...")
+
         # ROS subscribers and publishers
+        rospy.wait_for_service("/ardrone/setcamchannel")
+        self.cam_srv = rospy.ServiceProxy("/ardrone/setcamchannel", CamSelect)
         self.led_srv = rospy.ServiceProxy("/ardrone/setledanimation", LedAnim)
         self.takeoff_pub = rospy.Publisher("/ardrone/takeoff", Empty, queue_size=1)
         self.land_pub = rospy.Publisher("/ardrone/land", Empty, queue_size=1)
@@ -79,6 +83,9 @@ class FlightManager:
         # detected bundle pose
         self.bundle_pose = PoseStamped()
         self.bundle_pose_received = False
+
+        # select bottom camera
+        self.cam_srv(1)
 
         rospy.loginfo("Flight manager successfully initialized and ready.")
 

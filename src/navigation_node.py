@@ -7,7 +7,7 @@ import tf2_ros as tf
 from tf.transformations import euler_from_quaternion, quaternion_multiply
 from tf2_geometry_msgs import PoseStamped, PointStamped
 from ardrone_carrier.msg import NavigationGoal
-from geometry_msgs.msg import Twist  # for sending commands to the drone
+from geometry_msgs.msg import Twist, Quaternion  # for sending commands to the drone
 
 from pid import PID
 
@@ -76,7 +76,7 @@ class ArdroneNav:
 
         # init PID gains
         self.pid_gains = {'trans_x': {'P': 0.5, 'I': 0.1,  'D': 0.1},
-                          'trans_y': {'P': 0.5, 'I': 0.05, 'D': 0.1},
+                          'trans_y': {'P': 0.5, 'I': 0.5, 'D': 0.1},
                           'trans_z': {'P': 2.,  'I': 0.3,  'D': 0.2},
                           'rot_z':   {'P': 0.,  'I': 0.,   'D': 0.}}
 
@@ -97,6 +97,7 @@ class ArdroneNav:
 
         rospy.loginfo("Navigation successfully initialized and ready.")
 
+
     def run(self):
         # loop at given rate
         rate = rospy.Rate(LOOP_RATE)
@@ -104,10 +105,12 @@ class ArdroneNav:
             self.update()
             rate.sleep()
 
+
     def update(self):
         """
         compute velocity command through PID
         """
+
         # if no pose goal received, do nothing, and do not send any command
         if not self.has_started:
             rospy.logwarn("PID command hasn't started yet.")
@@ -152,7 +155,13 @@ class ArdroneNav:
                 cmd_vel.angular.z = command['rot_z']
 
             # publish the command msg to drone
+            # DEBUG
+            self.i_loop += 1
+            if self.i_loop % 50 == 0:
+                print('Cmd', cmd_vel)
+
             self.pub_command.publish(cmd_vel)
+
 
     def compute_error(self):
         """
@@ -182,6 +191,7 @@ class ArdroneNav:
 
         return error
 
+
     def pose_goal_callback(self, msg_pose):
         """
         Get target position in specific frame.
@@ -203,6 +213,7 @@ class ArdroneNav:
              self.target_pose.pose.orientation.z,
              self.target_pose.pose.orientation.w] == [0.0, 0.0, 0.0, 0.0]):
             self.no_quaternion = True
+            self.target_pose.pose.orientation.w = 1.0
 
         # According to mode, define target pose in referential
         if msg_pose.mode == NavigationGoal.ABSOLUTE:
@@ -222,8 +233,15 @@ class ArdroneNav:
             self.target_pose.pose.position.z += transform.transform.translation.z
 
             # TODO: check composition of quaternion
-            self.target_pose.pose.orientation = quaternion_multiply(self.target_pose.pose.orientation,
-                                                                    transform.transform.rotation)
+            print('target', type(self.target_pose.pose.orientation), self.target_pose.pose.orientation)
+            print('transform', type(transform.transform.rotation), transform.transform.rotation)
+            xyzw_array = lambda o: [o.x, o.y, o.z, o.w]
+
+            # Expanding quaternions is needed because of a bug in quaternion_multiply
+            self.target_pose.pose.orientation = Quaternion(*quaternion_multiply(xyzw_array(self.target_pose.pose.orientation),
+                                                                                xyzw_array(transform.transform.rotation)))
+
+            print('New orientation:', self.target_pose.pose.orientation)
 
         else:
             rospy.logerr('UNKNOWN MODE')

@@ -17,9 +17,9 @@ FRAME_FIXED = 'odom'
 
 LOOP_RATE = 10.  #  [Hz] rate of the ROS node loop
 
-TARGET_THRESHOLD_POSE = 5e-2
-TARGET_THRESHOLD_ORIENTATION = np.pi / 18.
-TARGET_THRESHOLD_SPEED = 0.1
+TARGET_THRESHOLD_POSE = 5e-2  # [m]
+TARGET_THRESHOLD_ORIENTATION = 10 * np.pi / 180.  # [rad]
+TARGET_THRESHOLD_SPEED = 0.1  # [m/s]
 
 
 def normalize_angle(rad):
@@ -47,6 +47,7 @@ class ArdroneNav:
 
         # ROS publishers/subscribers
         self.pub_command = rospy.Publisher('/cmd_vel', Twist, queue_size=1)  # drone speed command
+        self.pub_rviz_target_pose = rospy.Publisher('/rviz/pose_goal', PoseStamped, queue_size=1)
         self.sub_target_pos = rospy.Subscriber('/pose_goal', NavigationGoal, self.pose_goal_callback)
 
         # ----- Init control flags and target -----
@@ -54,14 +55,10 @@ class ArdroneNav:
         # Units will be meters, seconds, and radians.
 
         # target pose to reach
-        self.target_pose = PoseStamped()
-
-        # various control flags
-        self.has_started = False  # node hasn't received any command yet (to avoid computing PID on null pos)
-        self.has_reached_target = False  # When reaching target with a specific threshold, stop the PID
+        self.target_pose = None  # PoseStamped()
 
         # if no angle target is given, only compute command for position
-        self.no_quaternion = False
+        self.no_angle_control = False
 
         # DEBUG
         self.i_loop = 0
@@ -69,16 +66,16 @@ class ArdroneNav:
         # ----- Init PID controllers -----
 
         # saturation of commands
-        self.cmd_constrain = {'trans_x': 1.,
+        self.cmd_constrain = {'trans_x': 1.,  # maybe 2 ?
                               'trans_y': 1.,
                               'trans_z': 1.,
                               'rot_z': 0.7}
 
-        # init PID gains
-        self.pid_gains = {'trans_x': {'P': 0.5, 'I': 0.1,  'D': 0.1},
-                          'trans_y': {'P': 0.5, 'I': 0.5, 'D': 0.1},
-                          'trans_z': {'P': 2.,  'I': 0.3,  'D': 0.2},
-                          'rot_z':   {'P': 0.,  'I': 0.,   'D': 0.}}
+        # # init PID gains
+        self.pid_gains = {'trans_x': {'P': 0.7, 'I': 0., 'D': 0.2},  # I ~ 0.1
+                          'trans_y': {'P': 0.7, 'I': 0., 'D': 0.2},
+                          'trans_z': {'P': 2.,  'I': 0., 'D': 0.1},
+                          'rot_z':   {'P': 0.,  'I': 0.,  'D': 0.}}
 
         # init PID controllers
         self.pid = {}
@@ -93,74 +90,67 @@ class ArdroneNav:
             cmd_cstr = self.cmd_constrain[pid_name]
             if cmd_cstr != 0.0:
                 self.pid[pid_name].activate_command_saturation(-cmd_cstr, cmd_cstr)
-                print(self.pid[pid_name].saturation_activation)
+                print("Saturation activated for PID '%s'" % pid_name)
+
+        # wait for drone pose to be available
+        rospy.loginfo("Waiting for drone TF to be published...")
+        while (not rospy.is_shutdown() and 
+               not self.tf_buffer.can_transform(self.frame_fixed, self.frame_drone, rospy.Time(0), rospy.Duration(1.))):
+            pass
 
         rospy.loginfo("Navigation successfully initialized and ready.")
 
 
     def run(self):
+        """ Main loop """
         # loop at given rate
         rate = rospy.Rate(LOOP_RATE)
         while not rospy.is_shutdown():
-            self.update()
+            # update command only if active goal
+            if self.target_pose:
+                self.update()
             rate.sleep()
 
 
     def update(self):
         """
-        compute velocity command through PID
+        Compute velocity command through PID
         """
+        # compute error from drone current pose to target
+        error = self.compute_error()
 
-        # if no pose goal received, do nothing, and do not send any command
-        if not self.has_started:
-            rospy.logwarn("PID command hasn't started yet.")
+        # set empty command
+        command = {'trans_x': 0.,
+                    'trans_y': 0.,
+                    'trans_z': 0.,
+                    'rot_z':   0.}
 
-        # if we are too close from target, do nothing
-        elif self.has_started and self.has_reached_target:
-            rospy.logwarn('Target already reached, controller is off.')
+        # compute PID command
+        for pid_name in self.pid_gains:
+            if (pid_name.split('_')[0] == 'trans') or (not self.no_angle_control):
+                command[pid_name] = self.pid[pid_name].compute_command(error[pid_name])
 
-        # otherwise, run control !
-        else:
-            # compute error from drone current pose to target
-            error = self.compute_error()
+        # set drone velocity command
+        cmd_vel = Twist()
 
-            # set empty command
-            command = {'trans_x': 0.,
-                       'trans_y': 0.,
-                       'trans_z': 0.,
-                       'rot_z':   0.}
+        # # if drone has reached target, send one null command to enable hover mode
+        # if np.sqrt(error['trans_x'] ** 2 + error['trans_y'] ** 2 + error['trans_z'] ** 2) < TARGET_THRESHOLD_POSE \
+        #     and np.abs(error['rot_z']) < TARGET_THRESHOLD_ORIENTATION:
+        #     rospy.loginfo('Target reached !')
+        #     self.target_pose = None
 
-            # compute PID command
-            for pid_name in self.pid_gains:
-                if (pid_name.split('_')[0] == 'trans') or (not self.no_quaternion):
-                    command[pid_name] = self.pid[pid_name].compute_command(error[pid_name])
+        # otherwise, update order with computed PID commands
+        # else:
+        # WARNING: cmd_vel is not the wanted velocity we want the drone to have: only command +-1 ...
+        # WARNING: angular.x, angular.y should be zero, in order to stay in hover mode
+        # TODO : check units (m/s or mm/s, rad/s or deg/s)
+        cmd_vel.linear.x = command['trans_x']
+        cmd_vel.linear.y = command['trans_y']
+        cmd_vel.linear.z = command['trans_z']
+        cmd_vel.angular.z = command['rot_z']
 
-            # set drone velocity command
-            cmd_vel = Twist()
-
-            # if drone has reached target, send one null command to e,able hover mode
-            if np.sqrt(error['trans_x'] ** 2 + error['trans_y'] ** 2 + error['trans_z'] ** 2) < TARGET_THRESHOLD_POSE \
-               and np.abs(error['rot_z']) < TARGET_THRESHOLD_ORIENTATION:
-                rospy.loginfo('Target reached !')
-                self.has_reached_target = True
-
-            # otherwise, update order with computed PID commands
-            else:
-                # WARNING: cmd_vel is not the wanted velocity we want the drone to have: only command +-1 ...
-                # WARNING: angular.x, angular.y should be zero, in order to stay in hover mode
-                # TODO : check units (m/s or mm/s, rad/s or deg/s)
-                cmd_vel.linear.x = command['trans_x']
-                cmd_vel.linear.y = command['trans_y']
-                cmd_vel.linear.z = command['trans_z']
-                cmd_vel.angular.z = command['rot_z']
-
-            # publish the command msg to drone
-            # DEBUG
-            self.i_loop += 1
-            if self.i_loop % 50 == 0:
-                print('Cmd', cmd_vel)
-
-            self.pub_command.publish(cmd_vel)
+        # publish the command msg to drone
+        self.pub_command.publish(cmd_vel)
 
 
     def compute_error(self):
@@ -168,10 +158,12 @@ class ArdroneNav:
         With target expressed in target frame, compute real time error with ardrone position, with tf
         """
         # Express target pose in drone frame, which gives the error
+        target_pose = self.target_pose
+        target_pose.header.stamp = rospy.Time(0)
         error_pose = self.tf_buffer.transform(self.target_pose, self.frame_drone)
 
         # Transform quaternion into Euler (RPY) angle
-        if self.no_quaternion:
+        if self.no_angle_control:
             rotation = [0.0, 0.0, 0.0]
         else:
             quaternion = error_pose.pose.orientation
@@ -186,8 +178,8 @@ class ArdroneNav:
 
         # DEBUG
         self.i_loop += 1
-        if self.i_loop % 50 == 0:
-            print('Error', error)
+        if self.i_loop % 5 == 0:
+            print('Error : ' + str(error))
 
         return error
 
@@ -198,11 +190,8 @@ class ArdroneNav:
         We assume that target is already expressed in the control frame
         :param msg_pose: NavigationGoal msg
         """
-        # First time a command has been received
-        self.has_started = True
-        self.has_reached_target = False
-
         # Get position of target in target_frame
+        self.target_pose = PoseStamped()
         self.target_pose.pose = msg_pose.pose
         self.target_pose.header = msg_pose.header
         self.frame_target = msg_pose.header.frame_id
@@ -212,15 +201,15 @@ class ArdroneNav:
              self.target_pose.pose.orientation.y,
              self.target_pose.pose.orientation.z,
              self.target_pose.pose.orientation.w] == [0.0, 0.0, 0.0, 0.0]):
-            self.no_quaternion = True
+            self.no_angle_control = True
             self.target_pose.pose.orientation.w = 1.0
 
         # According to mode, define target pose in referential
         if msg_pose.mode == NavigationGoal.ABSOLUTE:
-            print('ABSOLUTE MODE')
+            rospy.loginfo('New ABSOLUTE target received.')
 
         elif msg_pose.mode == NavigationGoal.RELATIVE:
-            print('RELATIVE MODE')
+            rospy.loginfo('New RELATIVE target received.')
 
             # TODO: reset angle PIDs
             # get position of drone in target frame (as transform between origins is the same)
@@ -233,22 +222,18 @@ class ArdroneNav:
             self.target_pose.pose.position.z += transform.transform.translation.z
 
             # TODO: check composition of quaternion
-            print('target', type(self.target_pose.pose.orientation), self.target_pose.pose.orientation)
-            print('transform', type(transform.transform.rotation), transform.transform.rotation)
             xyzw_array = lambda o: [o.x, o.y, o.z, o.w]
-
-            # Expanding quaternions is needed because of a bug in quaternion_multiply
             self.target_pose.pose.orientation = Quaternion(*quaternion_multiply(xyzw_array(self.target_pose.pose.orientation),
                                                                                 xyzw_array(transform.transform.rotation)))
 
-            print('New orientation:', self.target_pose.pose.orientation)
-
         else:
-            rospy.logerr('UNKNOWN MODE')
-            raise NotImplementedError
+            rospy.logerr('Invvalid target recievd (unknown mode')
 
         # convert target pose into a fixed frame to avoid buffering its transform for a long time
         self.target_pose = self.tf_buffer.transform(self.target_pose, self.frame_fixed)
+
+        # publish target pose to display it with rviz
+        self.pub_rviz_target_pose.publish(self.target_pose)
 
 
 if __name__ == '__main__':

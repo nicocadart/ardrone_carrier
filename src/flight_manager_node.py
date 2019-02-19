@@ -113,6 +113,9 @@ class FlightManager:
 
             rate.sleep()
 
+        # land on exit
+        self.land_pub.publish()
+
     # =======================  States loops =======================
 
     def off_loop(self):

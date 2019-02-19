@@ -1,0 +1,13 @@
+<launch>
+
+	<!-- RViz with preconfigured display -->
+	<node
+		name="rviz"
+		pkg="rviz"
+		type="rviz"
+		args="-d $(find ardrone_carrier)/config/rviz_config.rviz"
+		respawn="false"
+		output="screen">
+	</node>
+
+</launch>

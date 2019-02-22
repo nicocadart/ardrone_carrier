@@ -6,7 +6,7 @@
         <param name="navdata_demo" value="False" />
         <param name="realtime_navdata" value="True" />
         <param name="realtime_video" value="True" />
-        <param name="looprate" value="30" />
+        <param name="looprate" value="50" />
 
         <param name="altitude_max" value="2000" /> <!-- in millimeters = 3 meters = 9' -->
         <param name="altitude_min" value="30" /> <!-- in millimeters = 5cm = 2" -->

@@ -39,11 +39,11 @@ BUNDLE_DETECTION_TIMEOUT = 1.  # [s] if a bundle detection is older than this, w
 BUNDLE_FINDING_DISTANCE_FACTOR = 0.10  # [m] how much we increase distance from approximate target position at each step
 
 # Flight parameters
-TAKEOFF_ALLOWED = False  # if False, no takeoff order will be sent (Test mode)
-FLIGHT_ALTITUDE = 1.  # [m] general altitude of flight for the drone
-FLIGHT_PRECISION = 0.20  # [m] tolerance to reach specified target
+TAKEOFF_ALLOWED = True  # if False, no takeoff order will be sent (Test mode)
+FLIGHT_ALTITUDE = 0.8  # [m] general altitude of flight for the drone
+FLIGHT_PRECISION = 0.30  # [m] tolerance to reach specified target
 
-LANDING_FACTOR = 0.95  # at each iteration, the drone multiply its distance to target by this factor
+LANDING_FACTOR = 0.8  # at each iteration, the drone multiply its distance to target by this factor
 LANDING_MIN_ALTITUDE = 0.20  # [m] below this altitude, the drone stops flying and tries to land
 
 
@@ -59,7 +59,7 @@ class FlightManager:
         self.takeoff_pub = rospy.Publisher("/ardrone/takeoff", Empty, queue_size=1)
         self.land_pub = rospy.Publisher("/ardrone/land", Empty, queue_size=1)
         self.nav_pub = rospy.Publisher("/pose_goal", NavigationGoal, queue_size=1)
-        self.command_sub = rospy.Subscriber("/command", ArdroneCommand, self._command_callback, queue_size=5)
+        self.command_sub = rospy.Subscriber("/command", ArdroneCommand, self._command_callback, queue_size=1)
         self.bundle_sub = rospy.Subscriber("/ar_pose_marker", AlvarMarkers, self._bundle_callback, queue_size=5)
         self.navdata_sub = rospy.Subscriber("/ardrone/navdata", Navdata, self._navdata_callback, queue_size=5)
 
@@ -84,8 +84,14 @@ class FlightManager:
         self.bundle_pose = PoseStamped()
         self.bundle_pose_received = False
 
-        # select bottom camera
+        # ensure bottom camera is selected
         self.cam_srv(1)
+
+        # send null pose to navigation
+        nav_target = NavigationGoal()
+        nav_target.header.frame_id = FRAME_DRONE
+        nav_target.mode = NavigationGoal.RELATIVE
+        self.nav_pub.publish(nav_target)
 
         rospy.loginfo("Flight manager successfully initialized and ready.")
 
@@ -172,6 +178,11 @@ class FlightManager:
         # if new bundle detection has been received, target has been found !
         if self.bundle_pose_received:
             self.bundle_pose_received = False
+            # send null pose to navigation
+            nav_target = NavigationGoal()
+            nav_target.header.frame_id = FRAME_DRONE
+            nav_target.mode = NavigationGoal.RELATIVE
+            self.nav_pub.publish(nav_target)
             # if command was only to find target, reset order and standby
             if self.command == ArdroneCommand.FIND:
                 self.command = ArdroneCommand.STANDBY
@@ -228,8 +239,9 @@ class FlightManager:
             # send tracking pose to navigation
             nav_target = NavigationGoal()
             nav_target.header = above_bundle_pose.header
-            nav_target.pose = above_bundle_pose.pose
+            nav_target.pose.position = above_bundle_pose.pose.position
             nav_target.mode = NavigationGoal.ABSOLUTE
+            self.target_point.point = nav_target.pose.position
             self.nav_pub.publish(nav_target)
 
         # if last bundle detection is too old, we have probably lost the target : we have to find it again
@@ -263,8 +275,9 @@ class FlightManager:
             # send tracking pose to navigation
             nav_target = NavigationGoal()
             nav_target.header = above_bundle_pose.header
-            nav_target.pose = above_bundle_pose.pose
+            nav_target.pose.position = above_bundle_pose.pose.position
             nav_target.mode = NavigationGoal.ABSOLUTE
+            self.target_point.point = nav_target.pose.position
             self.nav_pub.publish(nav_target)
 
         # if drone is landing or has landed, go to OFF state
@@ -298,6 +311,11 @@ class FlightManager:
 
         # GREEN when drone is ready and landed
         if new_state == STATE.OFF:
+            # send null pose to navigation
+            nav_target = NavigationGoal()
+            nav_target.header.frame_id = FRAME_DRONE
+            nav_target.mode = NavigationGoal.RELATIVE
+            self.nav_pub.publish(nav_target)
             self.led_srv(type=8, freq=1.0, duration=5)
 
         # BLINK_GREEN_RED when we are looking for target
@@ -338,7 +356,7 @@ class FlightManager:
         # update drone state (only if test mode is deactivated)
         self.drone_state = msg.state if TAKEOFF_ALLOWED else 0
         # check battery, and RED and print msg if it is too low
-        if msg.batteryPercent < 15. and msg.header.seq % 200:
+        if msg.batteryPercent < 15. and msg.header.seq % 1000 == 0:
             rospy.logwarn("Low battery : {}% !".format(msg.batteryPercent))
             self.led_srv(type=7, freq=1.0, duration=0)
 
@@ -356,6 +374,8 @@ class FlightManager:
 
         # ORANGE when receiving a new order
         self.led_srv(type=3, freq=10, duration=1)
+        # ensure bottom camera is selected
+        self.cam_srv(1)
         valid_command = True
 
         # send landing order

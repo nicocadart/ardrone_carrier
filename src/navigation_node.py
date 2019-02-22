@@ -15,9 +15,9 @@ from pid import PID
 FRAME_ARDRONE = 'ardrone_base_link'
 FRAME_FIXED = 'odom'
 
-LOOP_RATE = 10.  #  [Hz] rate of the ROS node loop
+LOOP_RATE = 20.  #  [Hz] rate of the ROS node loop
 
-TARGET_THRESHOLD_POSE = 5e-2  # [m]
+TARGET_THRESHOLD_POSE = 0.2  # [m]
 TARGET_THRESHOLD_ORIENTATION = 10 * np.pi / 180.  # [rad]
 TARGET_THRESHOLD_SPEED = 0.1  # [m/s]
 
@@ -52,30 +52,25 @@ class ArdroneNav:
 
         # ----- Init control flags and target -----
 
-        # Units will be meters, seconds, and radians.
-
         # target pose to reach
         self.target_pose = None  # PoseStamped()
 
         # if no angle target is given, only compute command for position
         self.no_angle_control = False
 
-        # DEBUG
-        self.i_loop = 0
-
         # ----- Init PID controllers -----
 
         # saturation of commands
-        self.cmd_constrain = {'trans_x': 1.,  # maybe 2 ?
+        self.cmd_constrain = {'trans_x': 1.,
                               'trans_y': 1.,
                               'trans_z': 1.,
                               'rot_z': 0.7}
 
-        # # init PID gains
-        self.pid_gains = {'trans_x': {'P': 0.7, 'I': 0., 'D': 0.2},  # I ~ 0.1
-                          'trans_y': {'P': 0.7, 'I': 0., 'D': 0.2},
-                          'trans_z': {'P': 2.,  'I': 0., 'D': 0.1},
-                          'rot_z':   {'P': 0.,  'I': 0.,  'D': 0.}}
+        # init PID gains
+        self.pid_gains = {'trans_x': {'P': 0.25, 'I': 0., 'D': 0.1},
+                          'trans_y': {'P': 0.25, 'I': 0., 'D': 0.1},
+                          'trans_z': {'P': 3.,  'I': 0., 'D': 0.0},
+                          'rot_z':   {'P': 0.,  'I': 0., 'D': 0.}}
 
         # init PID controllers
         self.pid = {}
@@ -133,21 +128,19 @@ class ArdroneNav:
         # set drone velocity command
         cmd_vel = Twist()
 
-        # # if drone has reached target, send one null command to enable hover mode
-        # if np.sqrt(error['trans_x'] ** 2 + error['trans_y'] ** 2 + error['trans_z'] ** 2) < TARGET_THRESHOLD_POSE \
-        #     and np.abs(error['rot_z']) < TARGET_THRESHOLD_ORIENTATION:
-        #     rospy.loginfo('Target reached !')
-        #     self.target_pose = None
+        # if drone has reached target, send one null command to enable hover mode
+        if np.sqrt(error['trans_x'] ** 2 + error['trans_y'] ** 2 + error['trans_z'] ** 2) < TARGET_THRESHOLD_POSE \
+            and np.abs(error['rot_z']) < TARGET_THRESHOLD_ORIENTATION:
+            rospy.loginfo('Target reached !')
+            self.target_pose = None
 
         # otherwise, update order with computed PID commands
-        # else:
-        # WARNING: cmd_vel is not the wanted velocity we want the drone to have: only command +-1 ...
-        # WARNING: angular.x, angular.y should be zero, in order to stay in hover mode
-        # TODO : check units (m/s or mm/s, rad/s or deg/s)
-        cmd_vel.linear.x = command['trans_x']
-        cmd_vel.linear.y = command['trans_y']
-        cmd_vel.linear.z = command['trans_z']
-        cmd_vel.angular.z = command['rot_z']
+        else:
+            # TODO : check units (m/s or mm/s, rad/s or deg/s)
+            cmd_vel.linear.x = command['trans_x'] # if abs(command['trans_x']) > 0.1 else 0.
+            cmd_vel.linear.y = command['trans_y'] # if abs(command['trans_y']) > 0.1 else 0.
+            cmd_vel.linear.z = command['trans_z'] # if abs(command['trans_z']) > 0.1 else 0.
+            cmd_vel.angular.z = command['rot_z'] # if abs(command['rot_z']) > 0.1 else 0.
 
         # publish the command msg to drone
         self.pub_command.publish(cmd_vel)
@@ -170,16 +163,11 @@ class ArdroneNav:
             rotation = euler_from_quaternion((quaternion.x, quaternion.y, quaternion.z, quaternion.w))
             rotation = [normalize_angle(angle) for angle in rotation]
 
-        # Compute orientation and position errors into a structure for PID control
+        # Compute orientation and positio2n errors into a structure for PID control
         error = {'trans_x': error_pose.pose.position.x,
                  'trans_y': error_pose.pose.position.y,
                  'trans_z': error_pose.pose.position.z,
                  'rot_z': rotation[2]}
-
-        # DEBUG
-        self.i_loop += 1
-        if self.i_loop % 5 == 0:
-            print('Error : ' + str(error))
 
         return error
 

@@ -2,8 +2,8 @@
 	<arg name="marker_size" default="8.2" />
 	<arg name="max_new_marker_error" default="0.08" />
 	<arg name="max_track_error" default="0.2" />
-	<arg name="cam_image_topic" default="/ardrone/bottom/image_raw" />
-	<arg name="cam_info_topic" default="/ardrone/bottom/new_camera_info" />
+	<arg name="cam_image_topic" default="/ardrone/bottom_new/image_raw" />
+	<arg name="cam_info_topic" default="/ardrone/bottom_new/camera_info" />
 	<arg name="output_frame" default="odom" />
 	<arg name="bundle_files" default="$(find ardrone_carrier)/doc/markers/markers_3_0_4.xml" />
 

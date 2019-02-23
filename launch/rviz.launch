@@ -7,7 +7,7 @@
 		type="rviz"
 		args="-d $(find ardrone_carrier)/config/rviz_config.rviz"
 		respawn="false"
-		output="screen">
-	</node>
+		output="screen"
+	/>
 
 </launch>

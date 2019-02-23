@@ -15,9 +15,9 @@ from pid import PID
 FRAME_ARDRONE = 'ardrone_base_link'
 FRAME_FIXED = 'odom'
 
-LOOP_RATE = 20.  #  [Hz] rate of the ROS node loop
+LOOP_RATE = 30.  #  [Hz] rate of the ROS node loop
 
-TARGET_THRESHOLD_POSE = 0.2  # [m]
+TARGET_THRESHOLD_POSE = 0.15  # [m]
 TARGET_THRESHOLD_ORIENTATION = 10 * np.pi / 180.  # [rad]
 TARGET_THRESHOLD_SPEED = 0.1  # [m/s]
 
@@ -67,9 +67,9 @@ class ArdroneNav:
                               'rot_z': 0.7}
 
         # init PID gains
-        self.pid_gains = {'trans_x': {'P': 0.25, 'I': 0., 'D': 0.1},
-                          'trans_y': {'P': 0.25, 'I': 0., 'D': 0.1},
-                          'trans_z': {'P': 3.,  'I': 0., 'D': 0.0},
+        self.pid_gains = {'trans_x': {'P': 0.15, 'I': 0.01, 'D': 0.05},
+                          'trans_y': {'P': 0.15, 'I': 0.01, 'D': 0.05},
+                          'trans_z': {'P': 3.,  'I': 0.01, 'D': 0.05},
                           'rot_z':   {'P': 0.,  'I': 0., 'D': 0.}}
 
         # init PID controllers

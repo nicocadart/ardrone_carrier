@@ -40,8 +40,8 @@ BUNDLE_FINDING_DISTANCE_FACTOR = 0.10  # [m] how much we increase distance from 
 
 # Flight parameters
 TAKEOFF_ALLOWED = True  # if False, no takeoff order will be sent (Test mode)
-FLIGHT_ALTITUDE = 0.8  # [m] general altitude of flight for the drone
-FLIGHT_PRECISION = 0.30  # [m] tolerance to reach specified target
+FLIGHT_ALTITUDE = 1.  # [m] general altitude of flight for the drone
+FLIGHT_PRECISION = 0.20  # [m] tolerance to reach specified target
 
 LANDING_FACTOR = 0.8  # at each iteration, the drone multiply its distance to target by this factor
 LANDING_MIN_ALTITUDE = 0.20  # [m] below this altitude, the drone stops flying and tries to land

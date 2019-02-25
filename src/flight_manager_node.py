@@ -33,24 +33,25 @@ FRAME_DRONE = "ardrone_base_link"  # drone
 FRAME_WORLD = "odom"  # base frame
 
 # time parameters
-LOOP_RATE = 10.  # [Hz] rate of the ROS node loop
+LOOP_RATE = 20.  # [Hz] rate of the ROS node loop
 BUNDLE_DETECTION_TIMEOUT = 1.  # [s] if a bundle detection is older than this, we go back to FINDING state
 
 BUNDLE_FINDING_DISTANCE_FACTOR = 0.10  # [m] how much we increase distance from approximate target position at each step
 
 # Flight parameters
 TAKEOFF_ALLOWED = True  # if False, no takeoff order will be sent (Test mode)
-FLIGHT_ALTITUDE = 1.  # [m] general altitude of flight for the drone
+FLIGHT_ALTITUDE = 1.20  # [m] general altitude of flight for the drone
 FLIGHT_PRECISION = 0.20  # [m] tolerance to reach specified target
 
-LANDING_FACTOR = 0.8  # at each iteration, the drone multiply its distance to target by this factor
-LANDING_MIN_ALTITUDE = 0.20  # [m] below this altitude, the drone stops flying and tries to land
+LANDING_FACTOR = 0.7  # at each iteration, the drone multiply its distance to target by this factor
+LANDING_MIN_ALTITUDE = 0.50  # [m] below this altitude, the drone stops flying and tries to land
 
 
 class FlightManager:
     def __init__(self):
         """ Object constructor. """
         rospy.loginfo("Waiting for 'ardrone_autonomy' node...")
+        rospy.on_shutdown(self.on_shutdown)
 
         # ROS subscribers and publishers
         rospy.wait_for_service("/ardrone/setcamchannel")
@@ -58,9 +59,9 @@ class FlightManager:
         self.led_srv = rospy.ServiceProxy("/ardrone/setledanimation", LedAnim)
         self.takeoff_pub = rospy.Publisher("/ardrone/takeoff", Empty, queue_size=1)
         self.land_pub = rospy.Publisher("/ardrone/land", Empty, queue_size=1)
-        self.nav_pub = rospy.Publisher("/pose_goal", NavigationGoal, queue_size=1)
+        self.nav_pub = rospy.Publisher("/pose_goal", NavigationGoal, queue_size=5)
         self.command_sub = rospy.Subscriber("/command", ArdroneCommand, self._command_callback, queue_size=1)
-        self.bundle_sub = rospy.Subscriber("/ar_pose_marker", AlvarMarkers, self._bundle_callback, queue_size=5)
+        self.bundle_sub = rospy.Subscriber("/ar_pose_marker", AlvarMarkers, self._bundle_callback, queue_size=10)
         self.navdata_sub = rospy.Subscriber("/ardrone/navdata", Navdata, self._navdata_callback, queue_size=5)
 
         # TF management
@@ -85,13 +86,11 @@ class FlightManager:
         self.bundle_pose_received = False
 
         # ensure bottom camera is selected
+        rospy.sleep(rospy.Duration(0.5))
         self.cam_srv(1)
 
         # send null pose to navigation
-        nav_target = NavigationGoal()
-        nav_target.header.frame_id = FRAME_DRONE
-        nav_target.mode = NavigationGoal.RELATIVE
-        self.nav_pub.publish(nav_target)
+        self.send_nav_null_order()
 
         rospy.loginfo("Flight manager successfully initialized and ready.")
 
@@ -119,9 +118,6 @@ class FlightManager:
 
             rate.sleep()
 
-        # land on exit
-        self.land_pub.publish()
-
     # =======================  States loops =======================
 
     def off_loop(self):
@@ -148,6 +144,13 @@ class FlightManager:
         """
         Fly to approximate target where bundle is supposed to be located.
         """
+        # if bundle detection has been received, target has been found : abort reaching loop
+        if self.bundle_pose_received and self.command in {ArdroneCommand.TRACK, ArdroneCommand.LAND}:
+            self.bundle_pose_received = False
+            self.send_nav_null_order()
+            self._change_state(STATE.TRACKING)
+            return
+
         # if new target has been received, send its pose to navigation node
         if self.target_point_received:
             self.target_point_received = False
@@ -178,11 +181,7 @@ class FlightManager:
         # if new bundle detection has been received, target has been found !
         if self.bundle_pose_received:
             self.bundle_pose_received = False
-            # send null pose to navigation
-            nav_target = NavigationGoal()
-            nav_target.header.frame_id = FRAME_DRONE
-            nav_target.mode = NavigationGoal.RELATIVE
-            self.nav_pub.publish(nav_target)
+            self.send_nav_null_order()
             # if command was only to find target, reset order and standby
             if self.command == ArdroneCommand.FIND:
                 self.command = ArdroneCommand.STANDBY
@@ -277,8 +276,10 @@ class FlightManager:
             nav_target.header = above_bundle_pose.header
             nav_target.pose.position = above_bundle_pose.pose.position
             nav_target.mode = NavigationGoal.ABSOLUTE
-            self.target_point.point = nav_target.pose.position
             self.nav_pub.publish(nav_target)
+            self.target_point.point.x = nav_target.pose.position.x
+            self.target_point.point.y = nav_target.pose.position.y
+            self.target_point.point.z = nav_target.pose.position.z + FLIGHT_ALTITUDE - LANDING_FACTOR * distance
 
         # if drone is landing or has landed, go to OFF state
         if self.drone_state in {0, 1, 2, 8}:
@@ -311,11 +312,7 @@ class FlightManager:
 
         # GREEN when drone is ready and landed
         if new_state == STATE.OFF:
-            # send null pose to navigation
-            nav_target = NavigationGoal()
-            nav_target.header.frame_id = FRAME_DRONE
-            nav_target.mode = NavigationGoal.RELATIVE
-            self.nav_pub.publish(nav_target)
+            self.send_nav_null_order()
             self.led_srv(type=8, freq=1.0, duration=5)
 
         # BLINK_GREEN_RED when we are looking for target
@@ -329,6 +326,18 @@ class FlightManager:
 
         # change state
         self.state = new_state
+
+    def send_nav_null_order(self):
+        """ Send null command to navigation node to disable it """
+        nav_target = NavigationGoal()
+        nav_target.header.frame_id = FRAME_DRONE
+        nav_target.mode = NavigationGoal.RELATIVE
+        self.nav_pub.publish(nav_target)
+
+    def on_shutdown(self):
+        # land on exit
+        self.send_nav_null_order()
+        self.land_pub.publish()
 
     # =======================  ROS callbacks =======================
 
@@ -441,4 +450,6 @@ if __name__ == '__main__':
         flight_manager = FlightManager()
         flight_manager.run()
     except rospy.ROSInterruptException:
-        print("Shutting down flight manager node...")
+        pass
+
+    print("Shutting down flight manager node...")

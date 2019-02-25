@@ -67,8 +67,8 @@ class ArdroneNav:
                               'rot_z': 0.7}
 
         # init PID gains
-        self.pid_gains = {'trans_x': {'P': 0.15, 'I': 0.01, 'D': 0.05},
-                          'trans_y': {'P': 0.15, 'I': 0.01, 'D': 0.05},
+        self.pid_gains = {'trans_x': {'P': 0.2, 'I': 0.01, 'D': 0.03},
+                          'trans_y': {'P': 0.2, 'I': 0.01, 'D': 0.03},
                           'trans_z': {'P': 3.,  'I': 0.01, 'D': 0.05},
                           'rot_z':   {'P': 0.,  'I': 0., 'D': 0.}}
 
@@ -137,10 +137,10 @@ class ArdroneNav:
         # otherwise, update order with computed PID commands
         else:
             # TODO : check units (m/s or mm/s, rad/s or deg/s)
-            cmd_vel.linear.x = command['trans_x'] # if abs(command['trans_x']) > 0.1 else 0.
-            cmd_vel.linear.y = command['trans_y'] # if abs(command['trans_y']) > 0.1 else 0.
-            cmd_vel.linear.z = command['trans_z'] # if abs(command['trans_z']) > 0.1 else 0.
-            cmd_vel.angular.z = command['rot_z'] # if abs(command['rot_z']) > 0.1 else 0.
+            cmd_vel.linear.x = command['trans_x']
+            cmd_vel.linear.y = command['trans_y']
+            cmd_vel.linear.z = command['trans_z']
+            cmd_vel.angular.z = command['rot_z']
 
         # publish the command msg to drone
         self.pub_command.publish(cmd_vel)

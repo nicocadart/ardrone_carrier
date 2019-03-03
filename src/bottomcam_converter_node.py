@@ -1,4 +1,9 @@
 #!/usr/bin/env python
+"""
+@brief Convert bottom camera to corrected bottom_new fake camera.
+@author N. Cadart
+@date February 2019
+"""
 import rospy
 from sensor_msgs.msg import CameraInfo, Image
 

@@ -1,18 +1,52 @@
 # ardrone_carrier
 
-ROS project fro an ardrone landing on mobile platform.
+ROS project for an ardrone landing on mobile platform, for course ROB314 at ENSTA ParisTech.
 
-## TODO
+Autors : N. Cadart, B. Sarthou, P. Antoine
 
-### navigation_node (and pid)
+Date : September 2018 - March 2019
 
-- new behavior : when receiving a new NavigationGoal msg, if quaternion is null, ignore rotation and simply fly to given position.
-- bug to fix : convert new NavigationGoal into right frame
-- test node on drone
+- [ardrone_carrier](#ardrone_carrier)
+  - [Description du projet](#description-du-projet)
+  - [Usage](#usage)
+  - [Descriptions des fichiers](#descriptions-des-fichiers)
+  - [Ar Track Alvar](#ar-track-alvar)
+    - [Mode d'emploi](#mode-demploi)
+    - [Observation des détections individuelles et *tf*](#observation-des-détections-individuelles-et-tf)
+    - [Observation des détections multiples (*bundles*)](#observation-des-détections-multiples-bundles)
+  - [Tum Ardrone](#tum-ardrone)
+  - [Calibration de la caméra](#calibration-de-la-caméra)
 
-### flight_manager_node
+## Description du projet
 
-- test node on drone with real navigation
+Ce package ROS a pour but d'utiliser un drone Parrot Ardrone de manière autonome afin de décoller, voler, détecter une cible, la suivre, puis atterrir dessus.
+
+L'interface avec le drone est faite au moyen de [ardrone_autonomy](https://ardrone-autonomy.readthedocs.io/en/latest/). La cible est assimilée à un ensemble de QR codes, détectés par [ar_track_alvar](http://wiki.ros.org/ar_track_alvar).
+
+## Usage
+
+Pour lancer l'interface de communication et de commande du drone, ainsi que la correction des TF erronées :
+```
+roslaunch ardrone_carrier ardrone_driver.launch
+```
+
+Pour lancer la détection de la cible par **ar_track_alvar**
+```
+roslaunch ardrone_carrier track_alvar_ardrone_bundles.launch
+```
+
+Pour lancer l'aperçu avec RViz :
+```
+roslaunch ardrone_carrier rviz.launch
+```
+
+## Descriptions des fichiers
+
+- `config/` : répertoire contenant les fichiers de calibrations des caméras (Ardrone 1 et 2), ainsi que la configuration de RViz pour ce projet.
+- `doc/` : répertoire contenant des images pour la documentation ainsi que la définition du bundle utilisé comme cible.
+- `launch/` : ROS launch files pour lancer les différents noeuds utilisés
+- `msg/` : ROS msgs définis dans ce package
+- `src/` : répertoire contenant le code source des noeuds développés pour ce projet.
 
 
 ## Ar Track Alvar
@@ -101,34 +135,32 @@ Launchfile à utiliser : `roslaunch ardrone_carrier track_alvar_ardrone_bundles.
 L'idée est de définir un "objet" rigide composé de plusieurs QR codes. On définit dans un fichier XML la position de ces QR codes pa rapport à la position d'un QR code *master*, ou principal. Seront publiés alors sur `/ar_pose_marker` la position du QR code *master* de ce bundle.
 La détection multiple permet d'être plus robuste aux occlusions, et de fournir une meilleure estimation de la position de l'objet total.
 
+
 ## Tum Ardrone
 
+Package ROS utilisant l'algorithme PTAM pour une meilleure estimation de la position du drone. Implémente un paquet complet de navigation pour l'Ardrone.
+Plus d'infos [ici](http://wiki.ros.org/tum_ardrone).
 
-### Setting target using the mouse from video feed
-
-Clicking on the video window will generate way points, which are sent to drone_autopilot (if running):
-
-- left-click: fly (x,y,0)m relative to the current position. The image-center is (0,0), borders are 2m respectively.
-- right-click: fly (0,0,y)m and rotate yaw by x degree. The Image-center is (0,0), borders are 2m and 90 degree respectively.
+Note : nécessite l'utilisation de la caméra frontale du drone.
 
 
 ## Calibration de la caméra
 
-Voir tutoriel [camera_calibration](http://wiki.ros.org/camera_calibration/Tutorials/MonocularCalibration).
+Pour que la détection des markers par **ar_track_alvar** soit efficace, il est nécessaire de calibrer les caméras du drone. Voir tutoriel [camera_calibration](http://wiki.ros.org/camera_calibration/Tutorials/MonocularCalibration).
 
 Paramètres:
-- `size`: taille en mètres des carrés de la mire
-- `cam_topic`: nom du topic où sont publiées les images de la caméra à calibrer
-- `cam_name`: nom de la caméra à calibrer
+- `size` : taille en mètres des carrés de la mire
+- `cam_topic` : nom du topic où sont publiées les images de la caméra à calibrer
+- `cam_name` : nom de la caméra à calibrer
 
 ```
 size=0.1085
-cam_topic=/ardrone/front/image_raw
-cam_info_topic=/ardrone/front/camera_info
+cam_topic=/ardrone/bottom/image_raw
+cam_name=/ardrone/bottom
 rosrun camera_calibration cameracalibrator.py --size 8x6 --square $size image:=$cam_topic camera:=$cam_name
 ```
 
-1. Lancer les commandes ci-dessus
-2. Bouger la mire dans le champ de vision de la caméra jusqu'à obtenir les jauges vertes
+1. Lancer les commandes ci-dessus.
+2. Bouger la mire dans le champ de vision de la caméra jusqu'à obtenir les jauges vertes.
 3. Cliquer sur "Calibrate" UNE SEULE FOIS. Le calcul du modèle de transformation peut prendre jusqu'à 1 min.
-4. Cliquer sur "Commit" pour enregistrer la calibration dans `/home/<username>/.ros/camera_info/`, ou sur "Save" pour écrire les résultats dans une archive `/tmp/calibrationdata.tar.gz`
+4. Cliquer sur "Commit" pour enregistrer la calibration dans `/home/<username>/.ros/camera_info/`, ou sur "Save" pour écrire les résultats dans une archive `/tmp/calibrationdata.tar.gz`.

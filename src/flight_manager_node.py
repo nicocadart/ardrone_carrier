@@ -1,4 +1,10 @@
 #!/usr/bin/env python
+"""
+@brief Flight manager node, the brain of the drone : decides the behavior of the
+       drone to fulfill its user defined mission.
+@author N. Cadart
+@date December 2018
+"""
 from __future__ import division, print_function
 from enum import IntEnum
 import numpy as np
@@ -6,13 +12,11 @@ import numpy as np
 import rospy
 import tf2_ros
 from std_msgs.msg import Empty
-# from geometry_msgs.msg import PoseStamped, PointStamped
 from geometry_msgs.msg import Point
 from tf2_geometry_msgs import PoseStamped, PointStamped
 from ar_track_alvar_msgs.msg import AlvarMarkers
 from ardrone_autonomy.msg import Navdata
 from ardrone_autonomy.srv import LedAnim, CamSelect
-
 from ardrone_carrier.msg import NavigationGoal, ArdroneCommand
 
 
@@ -30,18 +34,17 @@ class STATE(IntEnum):
 BUNDLE_ID = 3  # id of the master marker in the bundle
 FRAME_TARGET = "ar_marker_{}".format(BUNDLE_ID)  # target bundle to follow/land on
 FRAME_DRONE = "ardrone_base_link"  # drone
-FRAME_WORLD = "odom"  # base frame
+FRAME_WORLD = "odom"  # static frame
 
 # time parameters
 LOOP_RATE = 20.  # [Hz] rate of the ROS node loop
 BUNDLE_DETECTION_TIMEOUT = 1.  # [s] if a bundle detection is older than this, we go back to FINDING state
 
-BUNDLE_FINDING_DISTANCE_FACTOR = 0.10  # [m] how much we increase distance from approximate target position at each step
-
 # Flight parameters
 TAKEOFF_ALLOWED = True  # if False, no takeoff order will be sent (Test mode)
 FLIGHT_ALTITUDE = 1.20  # [m] general altitude of flight for the drone
 FLIGHT_PRECISION = 0.20  # [m] tolerance to reach specified target
+BUNDLE_FINDING_DISTANCE_FACTOR = 0.10  # [m] how much we increase distance from approximate target position at each step
 
 LANDING_FACTOR = 0.7  # at each iteration, the drone multiply its distance to target by this factor
 LANDING_MIN_ALTITUDE = 0.50  # [m] below this altitude, the drone stops flying and tries to land
@@ -53,7 +56,7 @@ class FlightManager:
         rospy.loginfo("Waiting for 'ardrone_autonomy' node...")
         rospy.on_shutdown(self.on_shutdown)
 
-        # ROS subscribers and publishers
+        # ROS services, subscribers and publishers
         rospy.wait_for_service("/ardrone/setcamchannel")
         self.cam_srv = rospy.ServiceProxy("/ardrone/setcamchannel", CamSelect)
         self.led_srv = rospy.ServiceProxy("/ardrone/setledanimation", LedAnim)
@@ -328,13 +331,14 @@ class FlightManager:
         self.state = new_state
 
     def send_nav_null_order(self):
-        """ Send null command to navigation node to disable it """
+        """ Send null command to navigation node to disable it. """
         nav_target = NavigationGoal()
         nav_target.header.frame_id = FRAME_DRONE
         nav_target.mode = NavigationGoal.RELATIVE
         self.nav_pub.publish(nav_target)
 
     def on_shutdown(self):
+        """ When ROS node is killed, stop navigation controller and send land order. """
         # land on exit
         self.send_nav_null_order()
         self.land_pub.publish()
@@ -451,5 +455,4 @@ if __name__ == '__main__':
         flight_manager.run()
     except rospy.ROSInterruptException:
         pass
-
     print("Shutting down flight manager node...")

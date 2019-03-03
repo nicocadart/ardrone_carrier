@@ -16,7 +16,7 @@
     </node>
 
     <!-- Correct TF of bottom camera -->
-    <node pkg="tf2_ros" type="static_transform_publisher" name="ardrone_base_bottomcam_new_tf_pub" args="0 -0.02 0 -1.571 0 3.142 ardrone_base_link ardrone_base_bottomcam_new"/>
+    <node name="ardrone_base_bottomcam_new_tf_pub" pkg="tf2_ros" type="static_transform_publisher" args="0 -0.02 0 -1.571 0 3.142 ardrone_base_link ardrone_base_bottomcam_new"/>
     <node name="bottomcam_converter" pkg="ardrone_carrier" type="bottomcam_converter_node.py" output="screen" respawn="true" />
 
 </launch>

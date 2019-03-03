@@ -1,5 +1,9 @@
 #!/usr/bin/python
-# coding=utf-8
+"""
+@brief Navigation node to fly the ardrone to a specific pose
+@author N. Cadart & B. Sarthou
+@date October 2018
+"""
 import numpy as np
 
 import rospy
@@ -230,4 +234,5 @@ if __name__ == '__main__':
         navigation_node = ArdroneNav()
         navigation_node.run()
     except rospy.ROSInterruptException:
-        print("Shutting down drone navigation node...")
+        pass
+    print("Shutting down drone navigation node...")
